@@ -10,9 +10,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup
-        run: yarn
-      - name: Run
-        uses: ./
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          github-token: "${{ secrets.REPO_TOKEN }}"
+          bun-version: latest
+
+      - name: Install Dependencies
+        run: bun install
+
+      - name: Run Bot
+        run: bun run index.js
+        env:
+          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+          MIDDLE_CA_KEY: ${{ secrets.MIDDLE_CA_KEY }}
+          MIDDLE_CA_CERT: ${{ secrets.MIDDLE_CA_CERT }}

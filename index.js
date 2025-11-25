@@ -15,7 +15,7 @@ async function run () {
   try {
     if (context.payload.sender.id === 244865617) return // ignore bot
 
-    const token = core.getInput('github-token')
+    const token = process.env.REPO_TOKEN
     const { owner, repo } = getRepo()
     const issue = await getIssue(token)
     const { type: prefixTag } = recognizeTitle(issue.title)
