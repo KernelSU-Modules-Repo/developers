@@ -211,7 +211,7 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
  */
 async function handleKeyringIssue () {
   try {
-    const token = core.getInput('github-token')
+    const token = process.env.REPO_TOKEN
     const { owner, repo } = getRepo()
 
     const action = context.payload.action
