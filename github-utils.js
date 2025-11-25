@@ -41,61 +41,6 @@ async function getIssue (token) {
   return data
 }
 
-async function createAndInviteToRepo (token, owner, username, repo) {
-  const octokit = getOctokit(token)
-  try {
-    await octokit.rest.repos.createInOrg({
-      org: owner,
-      name: repo,
-      has_issues: false,
-      has_projects: false,
-      has_wiki: false
-    })
-  } catch (err) {
-    let e = err
-    if (e.name === 'HttpError') e = e.response.data
-    if (e && e.errors && e.errors.length && e.errors[0].field === 'name') {
-      return false
-    }
-    console.log('嘤嘤嘤', JSON.stringify(err))
-    throw err
-  }
-  for (let i = 0; i < 3; i++) {
-    try {
-      await octokit.rest.repos.addCollaborator({
-        owner,
-        repo,
-        username,
-        permission: 'admin'
-      })
-      break
-    } catch (err) {
-      let e = err
-      if (e.status === 404) {
-        await new Promise(resolve => setTimeout(resolve, 2000))
-        continue
-      }
-      if (e.name === 'HttpError') e = e.response.data
-      if (e && e.errors && e.errors.length && e.errors[0].field === 'name') {
-        return false
-      }
-      console.log('呜呜呜', JSON.stringify(err))
-      throw err
-    }
-  }
-  return true
-}
-
-async function addLabel (token, owner, repo, issueNumber, label) {
-  const octokit = getOctokit(token)
-  await octokit.rest.issues.addLabels({
-    owner,
-    repo,
-    issue_number: issueNumber,
-    labels: [label]
-  })
-}
-
 async function setLabel (token, owner, repo, issueNumber, label) {
   const octokit = getOctokit(token)
   await octokit.rest.issues.setLabels({
@@ -106,13 +51,13 @@ async function setLabel (token, owner, repo, issueNumber, label) {
   })
 }
 
-async function leaveComment (token, owner, repo, issueNumber, comment) {
+async function addLabel (token, owner, repo, issueNumber, label) {
   const octokit = getOctokit(token)
-  await octokit.rest.issues.createComment({
+  await octokit.rest.issues.addLabels({
     owner,
     repo,
     issue_number: issueNumber,
-    body: comment
+    labels: [label]
   })
 }
 
@@ -151,22 +96,46 @@ async function orgBlockUser (token, owner, username) {
   })
 }
 
-async function getUser (token, username) {
+async function createComment (token, owner, repo, issueNumber, body) {
   const octokit = getOctokit(token)
-  return await octokit.rest.users.getByUsername({
-    username
+  await octokit.rest.issues.createComment({
+    owner,
+    repo,
+    issue_number: issueNumber,
+    body
+  })
+}
+
+async function removeLabel (token, owner, repo, issueNumber, label) {
+  const octokit = getOctokit(token)
+  await octokit.rest.issues.removeLabel({
+    owner,
+    repo,
+    issue_number: issueNumber,
+    name: label
+  })
+}
+
+async function updateIssue (token, owner, repo, issueNumber, state, stateReason) {
+  const octokit = getOctokit(token)
+  await octokit.rest.issues.update({
+    owner,
+    repo,
+    issue_number: issueNumber,
+    state,
+    state_reason: stateReason
   })
 }
 
 module.exports = {
   getRepo,
   getIssue,
-  createAndInviteToRepo,
-  addLabel,
   setLabel,
-  leaveComment,
+  addLabel,
   closeIssue,
   lockSpamIssue,
   orgBlockUser,
-  getUser
+  createComment,
+  removeLabel,
+  updateIssue
 }

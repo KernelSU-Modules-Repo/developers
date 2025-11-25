@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import * as openpgp from "openpgp";
+import * as forge from "node-forge";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { toast } from "sonner";
-import { 
-  Copy, Loader2, ShieldCheck, AlertTriangle, Search, Key, 
-  Github, Globe, Download, Upload, FileKey 
+import {
+  Copy, Loader2, ShieldCheck, AlertTriangle, Search, Key,
+  Github, Globe, Download, Upload, FileKey
 } from "lucide-react";
 
 import { locales, LocaleKey } from "@/lib/locales";
@@ -20,7 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-// ... (Zod Schemas 保持不变) ...
+// Zod Schemas
 const genSchema = z.object({
   name: z.string().min(2, "Name is too short"),
   email: z.string().email("Invalid email address"),
@@ -28,7 +28,7 @@ const genSchema = z.object({
 
 const submitSchema = z.object({
   username: z.string().min(1, "Username required"),
-  publicKey: z.string().includes("BEGIN PGP PUBLIC KEY BLOCK", { message: "Invalid PGP Key" }),
+  csr: z.string().includes("BEGIN CERTIFICATE REQUEST", { message: "Invalid CSR" }),
 });
 
 const revokeSchema = z.object({
@@ -38,10 +38,10 @@ const revokeSchema = z.object({
   details: z.string().optional(),
 });
 
-// --- 通用工具函数 ---
+// --- Utility Functions ---
 
-// 下载文件工具
-const downloadKey = (content: string, filename: string) => {
+// Download file utility
+const downloadFile = (content: string, filename: string) => {
   const blob = new Blob([content], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -53,17 +53,40 @@ const downloadKey = (content: string, filename: string) => {
   URL.revokeObjectURL(url);
 };
 
-// 文件导入处理工具 (返回 Fingerprint 和 Full Text)
-const parseKeyFile = async (file: File): Promise<{ fingerprint: string, text: string } | null> => {
+// Calculate certificate fingerprint (SHA-256)
+const getCertificateFingerprint = (cert: forge.pki.Certificate): string => {
+  const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
+  const md = forge.md.sha256.create();
+  md.update(der);
+  const digest = md.digest().toHex();
+  return digest.toUpperCase().match(/.{2}/g)?.join(':') || '';
+};
+
+// Parse certificate file and extract fingerprint
+const parseCertFile = async (file: File): Promise<{ fingerprint: string, text: string, cn?: string } | null> => {
   try {
     const text = await file.text();
-    // 尝试解析 PGP 密钥
-    const key = await openpgp.readKey({ armoredKey: text }).catch(() => null);
-    if (!key) throw new Error("Invalid Key");
-    return {
-      fingerprint: key.getFingerprint(),
-      text: text
-    };
+
+    // Try to parse as certificate
+    if (text.includes('BEGIN CERTIFICATE')) {
+      const cert = forge.pki.certificateFromPem(text);
+      const cn = cert.subject.getField('CN')?.value as string;
+      return {
+        fingerprint: getCertificateFingerprint(cert),
+        text: text,
+        cn
+      };
+    }
+
+    // Try to parse as CSR
+    if (text.includes('BEGIN CERTIFICATE REQUEST')) {
+      return {
+        fingerprint: '',
+        text: text
+      };
+    }
+
+    throw new Error("Invalid file format");
   } catch (e) {
     console.error(e);
     return null;
@@ -71,7 +94,6 @@ const parseKeyFile = async (file: File): Promise<{ fingerprint: string, text: st
 };
 
 export function KeyringApp() {
-  // ... (Main Layout 保持不变) ...
   const [lang, setLang] = useState<LocaleKey>("en");
   const t = locales[lang];
 
@@ -119,29 +141,60 @@ export function KeyringApp() {
           </div>
         </Tabs>
       </Card>
-      
+
       <footer className="mt-12 text-center text-sm text-slate-400">
-        <p>Powered by OpenPGP.js • Secure & Client-side Only</p>
+        <p>Powered by node-forge X.509 • Secure & Client-side Only</p>
       </footer>
     </div>
   );
 }
 
-// --- Sub Components (更新后的组件) ---
+// --- Sub Components ---
 
 function GenerateForm({ t }: { t: typeof locales.en }) {
-  const [keys, setKeys] = useState<{ priv: string; pub: string; fp: string; name: string } | null>(null);
+  const [keys, setKeys] = useState<{
+    privateKey: string;
+    csr: string;
+    fingerprint: string;
+    name: string
+  } | null>(null);
   const form = useForm<z.infer<typeof genSchema>>({ resolver: zodResolver(genSchema) });
   const [loading, setLoading] = useState(false);
 
   const onSubmit = async (data: z.infer<typeof genSchema>) => {
     setLoading(true);
     try {
-      const { privateKey, publicKey } = await openpgp.generateKey({
-        type: "ecc", curve: "secp256k1", userIDs: [{ name: data.name, email: data.email }], format: "armored"
+      // Generate RSA key pair (2048 bits for compatibility)
+      const keypair = forge.pki.rsa.generateKeyPair({ bits: 2048, workers: -1 });
+
+      // Create CSR
+      const csr = forge.pki.createCertificationRequest();
+      csr.publicKey = keypair.publicKey;
+      csr.setSubject([
+        { name: 'commonName', value: data.name },
+        { name: 'emailAddress', value: data.email },
+        { name: 'organizationName', value: 'KernelSU Module Developers' }
+      ]);
+
+      // Sign CSR with private key
+      csr.sign(keypair.privateKey, forge.md.sha256.create());
+
+      // Convert to PEM format
+      const privateKeyPem = forge.pki.privateKeyToPem(keypair.privateKey);
+      const csrPem = forge.pki.certificationRequestToPem(csr);
+
+      // Generate a fingerprint from public key for identification
+      const publicKeyDer = forge.asn1.toDer(forge.pki.publicKeyToAsn1(keypair.publicKey)).getBytes();
+      const md = forge.md.sha256.create();
+      md.update(publicKeyDer);
+      const fingerprint = md.digest().toHex().toUpperCase();
+
+      setKeys({
+        privateKey: privateKeyPem,
+        csr: csrPem,
+        fingerprint,
+        name: data.name.replace(/\s+/g, '_')
       });
-      const key = await openpgp.readKey({ armoredKey: publicKey });
-      setKeys({ priv: privateKey, pub: publicKey, fp: key.getFingerprint(), name: data.name.replace(/\s+/g, '_') });
       toast.success(t.gen.success);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -156,7 +209,7 @@ function GenerateForm({ t }: { t: typeof locales.en }) {
         <h2 className="text-lg font-semibold">{t.gen.title}</h2>
         <p className="text-sm text-slate-500">{t.gen.desc}</p>
       </div>
-      
+
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
           <Label>{t.gen.name}</Label>
@@ -181,17 +234,17 @@ function GenerateForm({ t }: { t: typeof locales.en }) {
              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                {t.gen.fingerprint_label}
              </span>
-             
+
              <div className="flex items-center justify-center gap-3 w-full max-w-full">
-               <code className="text-lg md:text-xl font-mono font-bold text-indigo-600 break-all">
-                 {keys.fp}
+               <code className="text-sm md:text-base font-mono font-bold text-indigo-600 break-all">
+                 {keys.fingerprint.match(/.{2}/g)?.join(':')}
                </code>
                <Button
                  variant="ghost"
                  size="icon"
                  className="shrink-0 hover:bg-indigo-100 hover:text-indigo-600 dark:hover:bg-slate-800"
                  onClick={() => {
-                   navigator.clipboard.writeText(keys.fp);
+                   navigator.clipboard.writeText(keys.fingerprint);
                    toast.success(t.common.copied);
                  }}
                  title={t.common.copy}
@@ -202,17 +255,17 @@ function GenerateForm({ t }: { t: typeof locales.en }) {
           </div>
 
           <div className="grid gap-6">
-            <KeyDisplay 
-              title={t.gen.priv_warn} 
-              content={keys.priv} 
-              isSecret 
-              downloadName={`${keys.name}_private.asc`}
+            <KeyDisplay
+              title={t.gen.priv_warn}
+              content={keys.privateKey}
+              isSecret
+              downloadName={`${keys.name}.key.pem`}
               downloadText={t.gen.download_priv}
             />
-            <KeyDisplay 
-              title={t.gen.pub_label} 
-              content={keys.pub} 
-              downloadName={`${keys.name}_public.asc`}
+            <KeyDisplay
+              title={t.gen.pub_label}
+              content={keys.csr}
+              downloadName={`${keys.name}.csr.pem`}
               downloadText={t.gen.download_pub}
             />
           </div>
@@ -228,21 +281,20 @@ function SubmitForm({ t }: { t: typeof locales.en }) {
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
-    const result = await parseKeyFile(file);
-    if (result) {
-      // 提交需要填入公钥文本
-      form.setValue("publicKey", result.text);
+
+    const result = await parseCertFile(file);
+    if (result && result.text.includes('BEGIN CERTIFICATE REQUEST')) {
+      form.setValue("csr", result.text);
       toast.success(t.common.import_success);
     } else {
       toast.error(t.common.import_error);
     }
-    e.target.value = ""; // reset input
+    e.target.value = "";
   };
 
   const onSubmit = (data: z.infer<typeof submitSchema>) => {
     const title = `[keyring] ${data.username}`;
-    const body = `## Submit Developer Public Key\n\n**Public Key**:\n\n\`\`\`\n${data.publicKey}\n\`\`\`\n\n---\nPlease review and add \`approved\` label.`;
+    const body = `## Submit Developer CSR (Certificate Signing Request)\n\n**CSR**:\n\n\`\`\`\n${data.csr}\n\`\`\`\n\n---\nPlease review and add \`approved\` label to issue certificate.`;
     window.open(`https://github.com/KernelSU-Modules-Repo/developers/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank");
   };
 
@@ -264,16 +316,15 @@ function SubmitForm({ t }: { t: typeof locales.en }) {
       <div className="space-y-2">
         <div className="flex justify-between items-center">
           <Label>{t.sub.pub}</Label>
-          {/* 文件导入按钮 */}
           <div className="flex items-center gap-2">
             <Label htmlFor="import-submit" className="cursor-pointer text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-2 py-1 rounded hover:bg-indigo-100 transition-colors">
               <Upload className="w-3 h-3" /> {t.common.import_file}
             </Label>
-            <Input id="import-submit" type="file" className="hidden" accept=".asc,.gpg,.txt" onChange={handleFileImport} />
+            <Input id="import-submit" type="file" className="hidden" accept=".pem,.csr,.txt" onChange={handleFileImport} />
           </div>
         </div>
-        <Textarea {...form.register("publicKey")} className="font-mono text-xs h-32" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----" />
-        {form.formState.errors.publicKey && <p className="text-xs text-red-500">{form.formState.errors.publicKey.message}</p>}
+        <Textarea {...form.register("csr")} className="font-mono text-xs h-32" placeholder="-----BEGIN CERTIFICATE REQUEST-----" />
+        {form.formState.errors.csr && <p className="text-xs text-red-500">{form.formState.errors.csr.message}</p>}
       </div>
 
       <div className="bg-amber-50 border border-amber-200 rounded-md p-3 flex gap-3 items-start">
@@ -289,11 +340,13 @@ function SubmitForm({ t }: { t: typeof locales.en }) {
 }
 
 interface QueryResult {
-  id: string;
-  fp: string;
-  created: string;
-  selfSigned: boolean;
-  coreSigned: boolean;
+  cn: string;
+  fingerprint: string;
+  serialNumber: string;
+  issuer: string;
+  validFrom: string;
+  validTo: string;
+  isValid: boolean;
 }
 
 function QueryForm({ t }: { t: typeof locales.en }) {
@@ -301,14 +354,13 @@ function QueryForm({ t }: { t: typeof locales.en }) {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // 导入逻辑：提取指纹
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
-    const result = await parseKeyFile(file);
-    if (result) {
-      setFp(result.fingerprint); // 自动填入指纹
+
+    const result = await parseCertFile(file);
+    if (result && result.fingerprint) {
+      setFp(result.fingerprint);
       toast.success(t.common.import_success);
     } else {
       toast.error(t.common.import_error);
@@ -321,37 +373,51 @@ function QueryForm({ t }: { t: typeof locales.en }) {
     setLoading(true);
     setResult(null);
     try {
-      const res = await fetch("https://raw.githubusercontent.com/KernelSU-Modules-Repo/developers/main/keyring/developers.pgp");
-      if (!res.ok) throw new Error("Failed to fetch keyring");
-      const text = await res.text();
-      const keys = await openpgp.readKeys({ armoredKeys: text });
-      // 支持带空格的指纹查询
-      const cleanFp = fp.replace(/\s/g, "").toUpperCase();
-      const found = keys.find(k => k.getFingerprint().toUpperCase().includes(cleanFp));
-      
-      if (found) {
-        const user = found.users[0];
-        const userId = user.userID?.userID;
-        if (!userId) {
-          toast.error("Invalid user ID");
-          return;
-        }
-        setResult({
-          id: userId,
-          fp: found.getFingerprint(),
-          created: found.getCreationTime().toLocaleDateString(),
-          selfSigned: user.selfCertifications.length > 0,
-          coreSigned: user.otherCertifications.length > 0
-        });
-        toast.success(t.query.found);
-      } else {
-        toast.error(t.query.not_found);
-      }
+      // Fetch certificate bundle from repository
+      const res = await fetch("https://raw.githubusercontent.com/KernelSU-Modules-Repo/developers/main/keyring/developers/");
+      if (!res.ok) throw new Error("Failed to fetch certificate list");
+
+      // For now, we'll provide a direct certificate lookup interface
+      // The actual implementation would iterate through available certificates
+      const cleanFp = fp.replace(/[:\s]/g, "").toUpperCase();
+
+      // Placeholder: In production, this would fetch and search actual certificates
+      toast.error(t.query.not_found + " (Certificate directory not yet configured)");
+
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
+  };
+
+  // Direct certificate verification from file
+  const handleVerifyCert = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const cert = forge.pki.certificateFromPem(text);
+
+      const cn = cert.subject.getField('CN')?.value as string || 'Unknown';
+      const issuerCN = cert.issuer.getField('CN')?.value as string || 'Unknown';
+      const now = new Date();
+
+      setResult({
+        cn,
+        fingerprint: getCertificateFingerprint(cert),
+        serialNumber: cert.serialNumber,
+        issuer: issuerCN,
+        validFrom: cert.validity.notBefore.toLocaleDateString(),
+        validTo: cert.validity.notAfter.toLocaleDateString(),
+        isValid: now >= cert.validity.notBefore && now <= cert.validity.notAfter
+      });
+      toast.success(t.query.found);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+    e.target.value = "";
   };
 
   return (
@@ -360,19 +426,19 @@ function QueryForm({ t }: { t: typeof locales.en }) {
         <h2 className="text-lg font-semibold">{t.query.title}</h2>
         <p className="text-sm text-slate-500">{t.query.desc}</p>
       </div>
-      
+
       <div className="space-y-2">
         <div className="flex justify-between">
           <Label>{t.query.ph}</Label>
           <div className="flex items-center gap-2">
-             <Label htmlFor="import-query" className="cursor-pointer text-xs flex items-center gap-1 text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded">
+             <Label htmlFor="verify-cert" className="cursor-pointer text-xs flex items-center gap-1 text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded">
                <FileKey className="w-3 h-3" /> {t.common.import_file}
              </Label>
-             <Input id="import-query" type="file" className="hidden" onChange={handleFileImport} />
+             <Input id="verify-cert" type="file" className="hidden" accept=".pem,.cert,.crt" onChange={handleVerifyCert} />
           </div>
         </div>
         <div className="flex gap-2">
-          <Input value={fp} onChange={e => setFp(e.target.value)} placeholder="ABCD 1234..." className="font-mono" />
+          <Input value={fp} onChange={e => setFp(e.target.value)} placeholder="AA:BB:CC:DD..." className="font-mono" />
           <Button onClick={handleQuery} disabled={loading}>
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
           </Button>
@@ -383,13 +449,34 @@ function QueryForm({ t }: { t: typeof locales.en }) {
         <Card className="bg-slate-50 dark:bg-slate-900">
           <CardContent className="p-4 space-y-3 text-sm">
              <div className="flex justify-between py-1 border-b">
-                <span className="text-slate-500">User ID</span>
-                <span className="font-medium">{result.id}</span>
+                <span className="text-slate-500">Common Name (CN)</span>
+                <span className="font-medium">{result.cn}</span>
              </div>
-             {/* ... 结果显示部分保持不变 ... */}
+             <div className="flex justify-between py-1 border-b">
+                <span className="text-slate-500">Serial Number</span>
+                <span className="font-mono text-xs">{result.serialNumber}</span>
+             </div>
+             <div className="flex justify-between py-1 border-b">
+                <span className="text-slate-500">Issuer</span>
+                <span className="font-medium">{result.issuer}</span>
+             </div>
+             <div className="flex justify-between py-1 border-b">
+                <span className="text-slate-500">Valid From</span>
+                <span>{result.validFrom}</span>
+             </div>
+             <div className="flex justify-between py-1 border-b">
+                <span className="text-slate-500">Valid To</span>
+                <span>{result.validTo}</span>
+             </div>
+             <div className="flex justify-between py-1 border-b">
+                <span className="text-slate-500">Status</span>
+                <span className={result.isValid ? "text-green-600 font-medium" : "text-red-600 font-medium"}>
+                  {result.isValid ? "Valid ✓" : "Expired ✗"}
+                </span>
+             </div>
              <div className="pt-2">
-                <span className="text-slate-500 block mb-1">Fingerprint</span>
-                <code className="block bg-slate-200 dark:bg-slate-800 p-2 rounded text-xs break-all">{result.fp}</code>
+                <span className="text-slate-500 block mb-1">Fingerprint (SHA-256)</span>
+                <code className="block bg-slate-200 dark:bg-slate-800 p-2 rounded text-xs break-all">{result.fingerprint}</code>
              </div>
           </CardContent>
         </Card>
@@ -401,13 +488,12 @@ function QueryForm({ t }: { t: typeof locales.en }) {
 function RevokeForm({ t }: { t: typeof locales.en }) {
   const form = useForm<z.infer<typeof revokeSchema>>({ resolver: zodResolver(revokeSchema) });
 
-  // 导入逻辑：提取指纹
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
-    const result = await parseKeyFile(file);
-    if (result) {
+
+    const result = await parseCertFile(file);
+    if (result && result.fingerprint) {
       form.setValue("fingerprint", result.fingerprint);
       toast.success(t.common.import_success);
     } else {
@@ -417,8 +503,8 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
   };
 
   const onSubmit = (data: z.infer<typeof revokeSchema>) => {
-    const title = `[revoke] ${data.fingerprint.substring(0, 16)}...`;
-    const body = `## Revoke Developer Key\n\n**Requested by**: @${data.username}\n**Key**: \`${data.fingerprint}\`\n**Reason**: ${data.reason}\n\n**Details**:\n${data.details || "N/A"}`;
+    const title = `[revoke] ${data.fingerprint.substring(0, 20)}...`;
+    const body = `## Revoke Developer Certificate\n\n**Requested by**: @${data.username}\n**Certificate Fingerprint**: \`${data.fingerprint}\`\n**Reason**: ${data.reason}\n\n**Details**:\n${data.details || "N/A"}`;
     window.open(`https://github.com/KernelSU-Modules-Repo/developers/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank");
   };
 
@@ -428,8 +514,7 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
         <h2 className="text-lg font-semibold text-red-600">{t.revoke.title}</h2>
         <p className="text-sm text-slate-500">{t.revoke.desc}</p>
       </div>
-      
-      {/* ... 用户名和原因部分保持不变 ... */}
+
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
           <Label>{t.sub.gh}</Label>
@@ -455,13 +540,12 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
              <Label htmlFor="import-revoke" className="cursor-pointer text-xs flex items-center gap-1 text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded">
                <FileKey className="w-3 h-3" /> {t.common.import_file}
              </Label>
-             <Input id="import-revoke" type="file" className="hidden" onChange={handleFileImport} />
+             <Input id="import-revoke" type="file" className="hidden" accept=".pem,.cert,.crt" onChange={handleFileImport} />
           </div>
         </div>
-        <Input {...form.register("fingerprint")} className="font-mono" placeholder="Full Fingerprint" />
+        <Input {...form.register("fingerprint")} className="font-mono" placeholder="Certificate Fingerprint (SHA-256)" />
       </div>
 
-      {/* ... Details Textarea 保持不变 ... */}
       <div className="space-y-2">
         <Label>{t.revoke.details}</Label>
         <Textarea {...form.register("details")} placeholder="Optional details..." />
@@ -475,11 +559,11 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
   );
 }
 
-// UI Helper: Key Display with Download & Copy
-function KeyDisplay({ 
-  title, content, isSecret, downloadName, downloadText 
-}: { 
-  title: string; content: string; isSecret?: boolean; downloadName?: string; downloadText?: string 
+// UI Helper: Key/Certificate Display with Download & Copy
+function KeyDisplay({
+  title, content, isSecret, downloadName, downloadText
+}: {
+  title: string; content: string; isSecret?: boolean; downloadName?: string; downloadText?: string
 }) {
   return (
     <div className={`rounded-md border overflow-hidden ${isSecret ? "border-red-200 bg-red-50 dark:bg-red-900/10" : "border-slate-200 bg-slate-50 dark:bg-slate-900"}`}>
@@ -487,8 +571,8 @@ function KeyDisplay({
         <span>{title}</span>
         <div className="flex gap-2">
           {downloadName && (
-            <button 
-              onClick={() => downloadKey(content, downloadName)} 
+            <button
+              onClick={() => downloadFile(content, downloadName)}
               className="flex items-center gap-1 hover:text-slate-900 dark:hover:text-slate-200 transition-colors"
               title={downloadText}
             >
@@ -496,8 +580,8 @@ function KeyDisplay({
             </button>
           )}
           <div className="w-px bg-slate-300 dark:bg-slate-700 h-3 my-auto"></div>
-          <button 
-            onClick={() => { navigator.clipboard.writeText(content); toast.success("Copied!") }} 
+          <button
+            onClick={() => { navigator.clipboard.writeText(content); toast.success("Copied!") }}
             className="flex items-center gap-1 hover:text-slate-900 dark:hover:text-slate-200 transition-colors"
           >
             <Copy className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Copy</span>

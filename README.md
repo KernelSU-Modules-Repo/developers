@@ -1,27 +1,269 @@
-# Submission
-Submit your KernelSU Modules!
+# KernelSU Developers Keyring Management
 
-### How to
-To submit your module, please fire an issue with title `[submission] module_id`, where `module_id` is the module ID of your module. Then our bot will automatically create a new repository and invite you to be the admin.
+基于 X.509 PKI 的开发者身份认证系统，采用三级 CA 架构和自动审核机制。
 
-### Repository structure
-- Title: the module ID of your module (for example `ksu_example_module`)
-- Description: the name of your module (for example `Example KernelSU Module`)
-- Collaborators: authors of the module
-- Release Title: the version name
-- Release Content: the changelog
-- Release Tag: [version code]-[version name] (if you create the release along with apk assets, bot will automatically update it)
-- Home Page: the support link
+## 📁 文件结构
 
-### Repository content
-- SUMMARY: the summary of your module, will be shown in the front page
-- README.md: the full description of your module
-- For all meta files available please refer to [the example repository](https://github.com/KernelSU-Modules-Repo/org.meowcat.example)
+```
+developers/
+├── index.js            # 主入口文件，处理 GitHub Actions 事件
+├── keyring.js          # X.509 证书签发核心逻辑
+├── rank.js             # GitHub 开发者评分算法（自动审核）
+├── github-utils.js     # GitHub API 封装工具函数
+├── utils.js            # 通用工具函数
+├── module_integrity.md # X.509 PKI 设计文档
+├── AUTO_REVIEW.md      # 自动审核机制详细说明
+└── website/            # 开发者门户网站（Next.js）
+    ├── src/
+    │   ├── components/keyring-app.tsx  # 证书管理 UI
+    │   └── lib/locales.ts              # 国际化（中英双语）
+    └── package.json
+```
 
-### Important notes
-1. If your repository is incomplete, it won't be shown
-2. Update of your repositiory will automatically trigger [build](https://github.com/KernelSU-Modules-Repo/modules/actions/workflows/build.yml) and be shown in 5min
-3. If you want your module's update to be shown, please tag it correctly with the apk. (As long as you submit the release with the apk, bot will automatically [update](https://github.com/KernelSU-Modules-Repo/modules/actions/workflows/tag.yml) your tag. However, if you edit the release by **only** changing the apk, bot [cannot know](https://stackoverflow.com/questions/37437581/listening-to-release-asset-changes-with-github-webhooks) your editting and the tag won't be updated. So for the best practice, always submit release with valid apk.
+## 📋 文件说明
 
-## Transfer
-If you want to transfer an existing repo to the modules repo, please fire an issue with title `[transfer] module_id` and transfer the ownership of your original repo to our orginization.
+### index.js
+- **职责**: GitHub Actions 主入口
+- **功能**:
+  - 监听 issue 的 `labeled` 和 `opened` 事件
+  - 处理 spam 标记和关闭
+  - 调用 keyring 处理流程
+
+### keyring.js
+- **职责**: X.509 证书签发和管理
+- **功能**:
+  - 从环境变量加载 Middle CA 证书和私钥
+  - 从 CSR 签发开发者证书
+  - 从 issue 中提取 CSR
+  - 自动评估开发者并采取相应操作
+  - 处理完整的 keyring issue 流程
+
+### rank.js ⭐ 新增
+- **职责**: GitHub 开发者评分和自动审核
+- **功能**:
+  - 基于 GitHub Readme Stats 算法计算开发者等级
+  - 从 GitHub API 获取用户统计数据
+  - 评估用户是否符合自动批准/拒绝条件
+  - 生成详细的评估报告
+
+### github-utils.js
+- **职责**: GitHub API 封装
+- **功能**:
+  - Issue 操作（获取、关闭、锁定）
+  - Label 操作（设置、添加、移除）
+  - Comment 操作（创建评论）
+  - 组织操作（屏蔽用户）
+
+### utils.js
+- **职责**: 通用工具函数
+- **功能**:
+  - 识别和解析 issue 标题标签
+
+## 🔐 PKI 架构
+
+### 三级 CA 信任链
+
+```
+Root CA (离线保存，20年有效期)
+    ↓ 签发
+Middle CA / Signer (GitHub Secrets，10年有效期)
+    ↓ 签发
+开发者证书 (1年有效期，Code Signing)
+    ↓ 签名
+模块 ZIP
+```
+
+### 证书规格
+
+| 证书类型 | Subject | 算法 | 有效期 | 用途 |
+|---------|---------|------|--------|------|
+| **Root CA** | CN=KernelSU Root CA P-384 | ECC P-384 | 20年 | 签发 Middle CA |
+| **Middle CA** | CN=KernelSU Signer P-384 | ECC P-384 | 10年 | 签发开发者证书 |
+| **开发者证书** | CN={GitHub用户名} | RSA 2048 | 1年 | 代码签名 |
+
+## 🤖 自动审核机制
+
+### 评分标准
+
+系统基于开发者的 GitHub 活动数据自动计算评分：
+
+| 指标 | 权重 | MEDIAN 值 |
+|------|------|-----------|
+| ⭐ **Stars** | **4** | 50 |
+| 🔀 **Pull Requests** | 3 | 50 |
+| 💻 **Commits** | 2 | 250 |
+| 🐛 **Issues** | 1 | 25 |
+| 👀 **Code Reviews** | 1 | 2 |
+| 👥 **Followers** | 1 | 10 |
+
+### 审核规则
+
+| 等级范围 | 百分位 | 操作 | 说明 |
+|---------|--------|------|------|
+| 🟢 **S, A+, A** | ≤ 25% | **自动批准** | Top 25% 开发者，立即签发证书 |
+| 🟡 **A-, B+, B, B-** | 25% - 75% | **人工审核** | 等待核心开发者手动审核 |
+| 🔴 **C+, C** | > 75% | **自动拒绝** | 需提升 GitHub 贡献后重新申请 |
+
+> 📖 **详细说明**: 参见 [AUTO_REVIEW.md](AUTO_REVIEW.md)
+
+## 🔑 环境变量
+
+### GitHub Secrets 配置
+
+- `MIDDLE_CA_CERT` - Middle CA 证书（PEM 格式，必需）
+- `MIDDLE_CA_KEY` - Middle CA 私钥（PEM 格式，必需）
+- `GITHUB_TOKEN` - GitHub API 令牌（自动提供）
+
+> ⚠️ **安全提示**: Root CA 私钥应离线保存，永不上传到云端
+
+## 🏷️ 支持的 Issue 标签
+
+- `[keyring]` - 开发者证书申请（提交 CSR）
+- `[revoke]` - 证书吊销请求
+- `[appeal]` - 申诉
+- `[issue]` - 问题反馈
+- `[suggestion]` - 建议
+
+## 🔄 完整工作流程
+
+### 1️⃣ 开发者申请证书
+
+1. 访问 [Developer Portal](https://kernelsu-modules-repo.github.io/developers/)
+2. 在 "Generate" 标签页生成私钥和 CSR
+3. 下载 `username.key.pem`（私钥，保密）和 `username.csr.pem`（CSR）
+4. 创建 `[keyring] username` issue，粘贴 CSR 内容
+
+### 2️⃣ 自动评估
+
+系统自动：
+1. 从 GitHub API 获取用户统计数据
+2. 计算开发者等级（S - C）
+3. 发布详细评估报告
+4. 根据等级采取行动：
+   - **Top 25%**: 自动添加 `approved` 标签
+   - **低于 75%**: 添加 `rejected` 标签并关闭 issue
+   - **中间范围**: 等待人工审核
+
+### 3️⃣ 证书签发（自动批准后）
+
+1. GitHub Actions 检测到 `approved` 标签
+2. 使用 Middle CA 签发开发者证书
+3. 在 issue 评论中返回证书（`.cert.pem`）
+4. 自动关闭 issue
+
+### 4️⃣ 使用证书签名模块
+
+```bash
+# 1. 保存证书
+# 下载 issue 中的证书并保存为 username.cert.pem
+
+# 2. 生成模块文件清单
+find . -type f ! -path './META-INF/*' -print0 | \
+  sort -z | xargs -0 sha256sum > META-INF/ksu/MANIFEST
+
+# 3. 使用私钥签名
+openssl dgst -sha256 -sign username.key.pem \
+  -out META-INF/ksu/MANIFEST.sig META-INF/ksu/MANIFEST
+
+# 4. 打包证书链
+cp username.cert.pem META-INF/ksu/CERT
+cp middle_ca.cert.pem META-INF/ksu/CHAIN.pem
+```
+
+## 📊 评估报告示例
+
+```markdown
+## Developer Evaluation Report
+
+**User**: @username (Real Name)
+**Account Created**: 2020-01-15
+
+### GitHub Statistics
+
+| Metric | Value | Weight | Median |
+|--------|-------|--------|--------|
+| 💻 Commits | 520 | 2 | 250 |
+| 🔀 Pull Requests | 85 | 3 | 50 |
+| 🐛 Issues | 42 | 1 | 25 |
+| 👀 Code Reviews | 15 | 1 | 2 |
+| ⭐ Stars | 320 | 4 | 50 |
+| 👥 Followers | 28 | 1 | 10 |
+
+### Ranking Result
+
+- **Level**: `A`
+- **Percentile**: `18.5%` (Top 18.5%)
+- **Score**: `9.76/12`
+
+### Decision
+
+**Action**: `auto_approve`
+**Reason**: Top 18.5% developer (Rank: A)
+```
+
+## 🛡️ 安全特性
+
+### 防刷榜设计
+
+- ✅ **Stars 权重最高（33.3%）**: 无法仅通过刷 commits 获得高分
+- ✅ **多维度评估**: 综合 6 项 GitHub 活动指标
+- ✅ **统计学方法**: 使用概率分布归一化，科学公平
+
+### 证书吊销
+
+使用 CRL（证书吊销列表）机制：
+
+```
+keyring/
+├── crl.pem  # 证书吊销列表（Middle CA 签发）
+```
+
+## 🌐 开发者门户
+
+访问 [https://kernelsu-modules-repo.github.io/developers/](https://kernelsu-modules-repo.github.io/developers/) 进行：
+
+- 🔑 生成私钥和 CSR
+- 📤 提交 CSR 到 GitHub Issue
+- 🔍 查询证书状态
+- 🚫 申请吊销证书
+
+支持中英双语界面。
+
+## 📚 相关文档
+
+- [X.509 PKI 设计文档](module_integrity.md) - 完整的三级 CA 架构设计
+- [自动审核机制详解](AUTO_REVIEW.md) - 评分算法和规则说明
+- [GitHub Readme Stats](https://github.com/anuraghazra/github-readme-stats) - 评分算法来源
+
+## 🔧 技术栈
+
+### 后端（GitHub Actions）
+- Node.js
+- `node-forge` - X.509 证书生成和签名
+- `@octokit/rest` - GitHub API 交互
+- `@actions/github` - GitHub Actions 工具包
+
+### 前端（开发者门户）
+- Next.js 16 (React 19)
+- TypeScript
+- `node-forge` - 浏览器端证书操作
+- Tailwind CSS
+- Shadcn UI
+
+## 📝 变更历史
+
+### v2.0.0 (2025-11-25)
+- ✨ 从 PGP 迁移到 X.509 PKI 架构
+- ✨ 实施三级 CA 信任链
+- ✨ 添加基于 GitHub Readme Stats 的自动审核机制
+- ✨ 重写前端 UI 支持 CSR 生成和证书验证
+- 📝 完整重写设计文档和用户指南
+
+### v1.0.0
+- 🎉 初始版本（基于 PGP Web-of-Trust）
+
+---
+
+**维护者**: KernelSU Core Team
+**许可证**: MIT
+**最后更新**: 2025-11-25
