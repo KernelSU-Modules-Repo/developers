@@ -27,13 +27,13 @@ function loadMiddleCA () {
 }
 
 /**
- * Extract CSR (Certificate Signing Request) from issue body
+ * Extract Public Key from issue body
  * @param {string} issueBody - Issue body content
- * @returns {string|null} Extracted CSR PEM or null
+ * @returns {string|null} Extracted Public Key PEM or null
  */
-function extractCSRFromIssue (issueBody) {
-  const csrBlockRegex = /-----BEGIN CERTIFICATE REQUEST-----([\s\S]*?)-----END CERTIFICATE REQUEST-----/
-  const match = issueBody.match(csrBlockRegex)
+function extractPublicKeyFromIssue (issueBody) {
+  const publicKeyBlockRegex = /-----BEGIN PUBLIC KEY-----([\s\S]*?)-----END PUBLIC KEY-----/
+  const match = issueBody.match(publicKeyBlockRegex)
 
   if (match) {
     return match[0]
@@ -66,25 +66,20 @@ function getCertificateFingerprint (cert) {
 }
 
 /**
- * Issue developer certificate from CSR
- * @param {string} csrPem - CSR in PEM format
+ * Issue developer certificate from public key
+ * @param {string} publicKeyPem - Public Key in PEM format
  * @param {string} username - Developer's GitHub username
  * @returns {Promise<{certPem: string, fingerprint: string, serialNumber: string}>}
  */
-function issueDeveloperCertificate (csrPem, username) {
+function issueDeveloperCertificate (publicKeyPem, username) {
   const { cert: caCert, privateKey: caKey } = loadMiddleCA()
 
-  // Parse CSR
-  const csr = forge.pki.certificationRequestFromPem(csrPem)
-
-  // Verify CSR signature
-  if (!csr.verify()) {
-    throw new Error('CSR signature verification failed')
-  }
+  // Parse public key
+  const publicKey = forge.pki.publicKeyFromPem(publicKeyPem)
 
   // Create certificate
   const cert = forge.pki.createCertificate()
-  cert.publicKey = csr.publicKey
+  cert.publicKey = publicKey
   cert.serialNumber = generateSerialNumber()
 
   // Validity: 1 year
@@ -202,14 +197,14 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
         '⏳ **Manual Review Required**\n\n' +
         `Your GitHub profile rank (${evaluation.rank.level}, ${evaluation.rank.percentile}%) falls in the manual review range.\n\n` +
         '**What happens next:**\n' +
-        '1. A core developer will review your GitHub profile and CSR\n' +
+        '1. A core developer will review your GitHub profile and public key\n' +
         '2. They may add the `approved` label if your contributions align with our requirements\n' +
         '3. Once approved, your certificate will be automatically issued\n\n' +
         '**Please wait patiently for manual approval.** This process helps us maintain the security and integrity of the KernelSU module ecosystem.\n\n' +
         '**Important reminders:**\n' +
         '- ⚠️ Never share your private key (`.key.pem` file) with anyone\n' +
-        '- ✅ Only the CSR (`.csr.pem` file) should be submitted in this issue\n' +
-        '- 📝 Make sure your CSR is properly formatted between `-----BEGIN CERTIFICATE REQUEST-----` and `-----END CERTIFICATE REQUEST-----` markers\n\n' +
+        '- ✅ Only the public key (`.pub.pem` file) should be submitted in this issue\n' +
+        '- 📝 Make sure your public key is properly formatted between `-----BEGIN PUBLIC KEY-----` and `-----END PUBLIC KEY-----` markers\n\n' +
         'If you have any questions, please refer to our [Developer Portal](https://kernelsu-modules-repo.github.io/developers/).'
       )
       console.log(`Manual review required: ${username} (Rank: ${evaluation.rank.level})`)
@@ -223,7 +218,7 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
       repo,
       issueNumber,
       `Dear @${username},\n\n` +
-      'Thank you for submitting your Certificate Signing Request (CSR) to the KernelSU Developer Keyring!\n\n' +
+      'Thank you for submitting your public key to the KernelSU Developer Keyring!\n\n' +
       '⚠️ **Unable to automatically evaluate your profile.** This may be due to:\n' +
       '- Private profile settings\n' +
       '- API rate limits\n' +
@@ -231,15 +226,15 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
       'Your request will be manually reviewed by a core developer.\n\n' +
       '**Important reminders:**\n' +
       '- ⚠️ Never share your private key (`.key.pem` file) with anyone\n' +
-      '- ✅ Only the CSR (`.csr.pem` file) should be submitted in this issue\n' +
-      '- 📝 Make sure your CSR is properly formatted\n\n' +
+      '- ✅ Only the public key (`.pub.pem` file) should be submitted in this issue\n' +
+      '- 📝 Make sure your public key is properly formatted\n\n' +
       'If you have any questions, please refer to our [Developer Portal](https://kernelsu-modules-repo.github.io/developers/).'
     )
   }
 }
 
 /**
- * Handle developer CSR submission in Issue
+ * Handle developer public key submission in Issue
  * Automatically issue certificate when core developer adds 'approved' label
  */
 async function handleKeyringIssue () {
@@ -286,25 +281,25 @@ async function handleKeyringIssue () {
 
     const approver = context.payload.sender
 
-    const csrPem = extractCSRFromIssue(issueBody)
+    const publicKeyPem = extractPublicKeyFromIssue(issueBody)
 
-    if (!csrPem) {
+    if (!publicKeyPem) {
       await createComment(
         token,
         owner,
         repo,
         issueNumber,
-        '⚠️ Unable to extract valid CSR from Issue.\n\n' +
-        'Please ensure your Issue description contains a complete Certificate Signing Request (CSR):\n' +
+        '⚠️ Unable to extract valid public key from Issue.\n\n' +
+        'Please ensure your Issue description contains a complete public key:\n' +
         '```\n' +
-        '-----BEGIN CERTIFICATE REQUEST-----\n' +
+        '-----BEGIN PUBLIC KEY-----\n' +
         '...\n' +
-        '-----END CERTIFICATE REQUEST-----\n' +
+        '-----END PUBLIC KEY-----\n' +
         '```\n\n' +
-        '**How to generate a CSR:**\n' +
+        '**How to generate a key pair:**\n' +
         '1. Visit our [Developer Portal](https://kernelsu-modules-repo.github.io/developers/)\n' +
-        '2. Use the "Generate Key" tab to create your private key and CSR\n' +
-        '3. Submit the CSR (NOT the private key) in this issue'
+        '2. Use the "Generate Key" tab to create your private key and public key\n' +
+        '3. Submit the public key (NOT the private key) in this issue'
       )
       await removeLabel(token, owner, repo, issueNumber, 'approved')
       return
@@ -312,7 +307,7 @@ async function handleKeyringIssue () {
 
     let result
     try {
-      result = issueDeveloperCertificate(csrPem, username)
+      result = issueDeveloperCertificate(publicKeyPem, username)
     } catch (err) {
       await createComment(
         token,
@@ -321,7 +316,7 @@ async function handleKeyringIssue () {
         issueNumber,
         `❌ Failed to issue certificate: ${err.message}\n\n` +
         'Please check:\n' +
-        '- CSR format is valid\n' +
+        '- Public key format is valid\n' +
         '- Middle CA certificate and private key are correctly configured in GitHub Secrets\n' +
         '- Required secrets: `MIDDLE_CA_CERT`, `MIDDLE_CA_KEY`'
       )
@@ -362,7 +357,7 @@ async function handleKeyringIssue () {
 module.exports = {
   handleKeyringIssue,
   issueDeveloperCertificate,
-  extractCSRFromIssue,
+  extractPublicKeyFromIssue,
   loadMiddleCA,
   getCertificateFingerprint,
   autoEvaluateDeveloper
