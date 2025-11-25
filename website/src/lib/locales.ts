@@ -37,6 +37,7 @@ export const locales = {
     revoke: {
       title: "Revoke Certificate",
       desc: "Create a request to revoke a compromised or lost certificate.",
+      serial_label: "Certificate Serial Number",
       reason: "Reason",
       reasons: {
         compromised: "Certificate Compromised (Private key leaked)",
@@ -94,6 +95,7 @@ export const locales = {
     revoke: {
       title: "吊销证书",
       desc: "创建请求以吊销泄露或丢失的证书。",
+      serial_label: "证书序列号",
       reason: "吊销原因",
       reasons: {
         compromised: "证书泄露 (私钥被盗)",

@@ -3,6 +3,7 @@ const { context } = require('@actions/github')
 const { setLabel, closeIssue, getIssue, getRepo, lockSpamIssue, orgBlockUser } = require('./github-utils')
 const { recognizeTitle } = require('./utils')
 const { handleKeyringIssue } = require('./keyring')
+const { handleRevokeIssue } = require('./revoke')
 
 async function closeSpam (token, owner, repo, issueNo, username = '') {
   await setLabel(token, owner, repo, issueNo, 'spam')
@@ -43,6 +44,11 @@ async function run () {
       // handle keyring issue (auto-evaluation)
       if (prefixTag === 'keyring') {
         await handleKeyringIssue()
+      }
+
+      // handle revoke issue
+      if (prefixTag === 'revoke') {
+        await handleRevokeIssue()
       }
     }
   } catch (error) {

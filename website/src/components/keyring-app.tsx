@@ -32,7 +32,7 @@ const submitSchema = z.object({
 
 const revokeSchema = z.object({
   username: z.string().min(1),
-  fingerprint: z.string().min(10),
+  serial_number: z.string().min(10),
   reason: z.string(),
   details: z.string().optional(),
 });
@@ -61,18 +61,47 @@ const getCertificateFingerprint = (cert: forge.pki.Certificate): string => {
   return digest.toUpperCase().match(/.{2}/g)?.join(':') || '';
 };
 
-// Parse certificate file and extract fingerprint
-const parseCertFile = async (file: File): Promise<{ fingerprint: string, text: string, cn?: string } | null> => {
+// Get certificate serial number
+const getCertificateSerialNumber = (cert: forge.pki.Certificate): string => {
+  return cert.serialNumber;
+};
+
+// Parse certificate file and extract serial number and fingerprint
+// IMPORTANT: For certificate chains, this extracts the FIRST (leaf) certificate only
+const parseCertFile = async (file: File): Promise<{ serialNumber: string, fingerprint: string, text: string, cn?: string } | null> => {
   try {
     const text = await file.text();
 
     // Try to parse as certificate
     if (text.includes('BEGIN CERTIFICATE')) {
-      const cert = forge.pki.certificateFromPem(text);
+      // Extract only the FIRST certificate from the chain
+      const certMatch = text.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+      if (!certMatch) {
+        throw new Error("No valid certificate found");
+      }
+
+      const firstCertPem = certMatch[0];
+      const cert = forge.pki.certificateFromPem(firstCertPem);
+
+      // Validate this is a developer certificate (not a CA certificate)
+      const basicConstraintsExt = cert.getExtension('basicConstraints');
+      if (basicConstraintsExt && (basicConstraintsExt as any).cA === true) {
+        throw new Error("This is a CA certificate, not a developer certificate. Please upload your developer certificate.");
+      }
+
+      // Extract fields
       const cn = cert.subject.getField('CN')?.value as string;
+      const org = cert.subject.getField('O')?.value as string;
+
+      // Validate organization (optional check, can be removed if too strict)
+      if (org && org !== 'KernelSU Module Developers') {
+        console.warn(`Warning: Certificate organization is "${org}", expected "KernelSU Module Developers"`);
+      }
+
       return {
+        serialNumber: getCertificateSerialNumber(cert),
         fingerprint: getCertificateFingerprint(cert),
-        text: text,
+        text: firstCertPem,
         cn
       };
     }
@@ -80,6 +109,7 @@ const parseCertFile = async (file: File): Promise<{ fingerprint: string, text: s
     // Try to parse as CSR
     if (text.includes('BEGIN CERTIFICATE REQUEST')) {
       return {
+        serialNumber: '',
         fingerprint: '',
         text: text
       };
@@ -556,8 +586,8 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
     if (!file) return;
 
     const result = await parseCertFile(file);
-    if (result && result.fingerprint) {
-      form.setValue("fingerprint", result.fingerprint);
+    if (result && result.serialNumber) {
+      form.setValue("serial_number", result.serialNumber);
       toast.success(t.common.import_success);
     } else {
       toast.error(t.common.import_error);
@@ -571,7 +601,7 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
       template: 'revoke.yml',
       title: `[revoke] ${data.username}`,
       username: data.username,
-      fingerprint: data.fingerprint,
+      serial_number: data.serial_number,
       reason: data.reason,
       details: data.details || ''
     });
@@ -606,7 +636,7 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
 
       <div className="space-y-2">
         <div className="flex justify-between">
-          <Label>{t.query.ph}</Label>
+          <Label>{t.revoke.serial_label || "Certificate Serial Number"}</Label>
           <div className="flex items-center gap-2">
              <Label htmlFor="import-revoke" className="cursor-pointer text-xs flex items-center gap-1 text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded">
                <FileKey className="w-3 h-3" /> {t.common.import_file}
@@ -614,7 +644,7 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
              <Input id="import-revoke" type="file" className="hidden" accept=".pem,.cert,.crt" onChange={handleFileImport} />
           </div>
         </div>
-        <Input {...form.register("fingerprint")} className="font-mono" placeholder="Certificate Fingerprint (SHA-256)" />
+        <Input {...form.register("serial_number")} className="font-mono" placeholder="1a2b3c4d5e6f7890abcdef1234567890" />
       </div>
 
       <div className="space-y-2">

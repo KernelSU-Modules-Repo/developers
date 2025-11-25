@@ -262,10 +262,111 @@ async function getCertificateStatistics (username, token, owner, repo) {
   return { total, active, expired, revoked }
 }
 
+/**
+ * 验证证书是否属于指定用户
+ * @param {string} serialNumber - 证书序列号
+ * @param {string} username - 声称拥有证书的用户名
+ * @param {string} token - GitHub token
+ * @param {string} owner - 仓库所有者
+ * @param {string} repo - 仓库名
+ * @returns {Promise<{isOwner: boolean, actualOwner?: string, issueNumber?: number}>}
+ */
+async function verifyCertificateOwnership (serialNumber, username, token, owner, repo) {
+  try {
+    console.log(`Verifying certificate ownership: serial=${serialNumber}, claimed user=${username}`)
+
+    const octokit = require('@actions/github').getOctokit(token)
+
+    // GraphQL 查询所有带有 approved 标签的已关闭 keyring issues
+    const query = `
+      query($owner: String!, $repo: String!) {
+        repository(owner: $owner, name: $repo) {
+          issues(
+            first: 100
+            filterBy: { states: CLOSED, labels: ["approved"] }
+            orderBy: { field: CREATED_AT, direction: DESC }
+          ) {
+            nodes {
+              number
+              title
+              author {
+                login
+              }
+              comments(first: 100) {
+                nodes {
+                  body
+                  createdAt
+                }
+              }
+            }
+          }
+        }
+      }
+    `
+
+    const result = await octokit.graphql(query, { owner, repo })
+    const issues = result.repository.issues.nodes
+
+    // 搜索包含该序列号的 issue
+    for (const issue of issues) {
+      if (!issue.title.toLowerCase().includes('[keyring]')) continue
+
+      const certComment = issue.comments.nodes.find(c =>
+        c.body &&
+        c.body.includes('✅ Certificate successfully issued') &&
+        c.body.includes(serialNumber)
+      )
+
+      if (certComment) {
+        const actualOwner = issue.author.login
+        console.log(`Found certificate: serial=${serialNumber}, owner=${actualOwner}, issue=#${issue.number}`)
+
+        return {
+          isOwner: actualOwner.toLowerCase() === username.toLowerCase(),
+          actualOwner,
+          issueNumber: issue.number
+        }
+      }
+    }
+
+    console.log(`Certificate not found: serial=${serialNumber}`)
+    return { isOwner: false }
+  } catch (error) {
+    console.error('Error verifying certificate ownership:', error)
+    throw new Error(`Failed to verify certificate ownership: ${error.message}`)
+  }
+}
+
+/**
+ * 检查用户是否是组织管理员
+ * @param {string} username - 用户名
+ * @param {string} token - GitHub token
+ * @param {string} owner - 组织名称
+ * @returns {Promise<boolean>}
+ */
+async function isOrgAdmin (username, token, owner) {
+  try {
+    const octokit = require('@actions/github').getOctokit(token)
+
+    const { data } = await octokit.rest.orgs.getMembershipForUser({
+      org: owner,
+      username
+    })
+
+    // role 可以是 'admin' 或 'member'
+    return data.role === 'admin'
+  } catch (error) {
+    console.error(`Error checking org admin status for ${username}:`, error.message)
+    return false
+  }
+}
+
 module.exports = {
   checkExistingCertificate,
   fetchUserCertificateIssues,
   getCertificateStatistics,
   extractCertificateInfo,
-  isCertificateRevoked
+  isCertificateRevoked,
+  verifyCertificateOwnership,
+  isOrgAdmin
 }

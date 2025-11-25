@@ -26,11 +26,11 @@ body:
       required: true
 
   - type: input
-    id: fingerprint
+    id: serial_number
     attributes:
-      label: Certificate Fingerprint
-      description: The SHA-256 fingerprint of the certificate to revoke
-      placeholder: "AA:BB:CC:DD:EE:FF:..."
+      label: Certificate Serial Number
+      description: The serial number of the certificate to revoke (found in your certificate issuance comment)
+      placeholder: "1a2b3c4d5e6f7890abcdef1234567890"
     validations:
       required: true
 
