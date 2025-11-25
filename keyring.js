@@ -2,8 +2,9 @@ const core = require('@actions/core')
 const { context } = require('@actions/github')
 const crypto = require('crypto')
 const x509 = require('@peculiar/x509')
-const { getRepo, createComment, removeLabel, closeIssue, addLabel } = require('./github-utils')
+const { getRepo, createComment, removeLabel, closeIssue, addLabel, setLabel } = require('./github-utils')
 const { fetchUserStats, evaluateUser, generateReport } = require('./rank')
+const { checkExistingCertificate } = require('./cert-manager')
 
 // Set crypto provider for @peculiar/x509
 x509.cryptoProvider.set(crypto.webcrypto)
@@ -299,6 +300,54 @@ async function handleKeyringIssue () {
     // Handle newly opened keyring issues
     if (action === 'opened') {
       console.log('Handling opened keyring issue')
+
+      // 检查用户是否已有有效证书
+      console.log('Checking for existing certificates...')
+      const existingCert = await checkExistingCertificate(username, token, owner, repo)
+
+      if (existingCert.hasActiveCert) {
+        console.log('User already has an active certificate, rejecting request')
+        const cert = existingCert.certificate
+        await createComment(
+          token,
+          owner,
+          repo,
+          issueNumber,
+          `⚠️ **证书申请被拒绝 / Certificate Request Rejected**\n\n` +
+          `@${username}，您已经拥有一个有效的开发者证书 / You already have an active developer certificate:\n\n` +
+          `- **序列号 / Serial Number**: \`${cert.serialNumber}\`\n` +
+          `- **指纹 / Fingerprint**: \`${cert.fingerprint || 'N/A'}\`\n` +
+          `- **签发时间 / Issued**: ${new Date(cert.issuedAt).toLocaleDateString('zh-CN')}\n` +
+          `- **过期时间 / Expires**: ${new Date(cert.expiresAt).toLocaleDateString('zh-CN')}\n` +
+          `- **原始 Issue**: #${existingCert.issueNumber}\n\n` +
+          `---\n\n` +
+          `**策略 / Policy**: 每个开发者同一时间只能持有**一个**有效证书 / Each developer can only hold **ONE** active certificate at a time.\n\n` +
+          `**选项 / Options**:\n` +
+          `1. 等待当前证书过期后重新申请 / Wait for your current certificate to expire before reapplying\n` +
+          `2. 如果需要更换证书，请先创建 \`[revoke]\` issue 吊销当前证书 / To replace your certificate, create a \`[revoke]\` issue first\n` +
+          `3. 如果您丢失了私钥，请先创建 \`[revoke]\` issue，然后重新申请 / If you lost your private key, create a \`[revoke]\` issue first, then reapply\n\n` +
+          `**安全提示 / Security Note**: 此策略可防止证书滥用和吊销绕过 / This policy prevents certificate abuse and revocation bypass.`
+        )
+        await setLabel(token, owner, repo, issueNumber, 'duplicate')
+        await closeIssue(token, owner, repo, issueNumber, false)
+        return
+      }
+
+      if (existingCert.error) {
+        console.log('Certificate check had errors, but proceeding with issuance')
+        await createComment(
+          token,
+          owner,
+          repo,
+          issueNumber,
+          `⚠️ **注意 / Note**: 无法完全验证您的证书历史记录，但申请将继续处理。\n\n` +
+          `Unable to fully verify your certificate history, but your application will proceed.\n\n` +
+          `错误信息 / Error: ${existingCert.error}`
+        )
+      } else {
+        console.log('No active certificate found, proceeding with evaluation')
+      }
+
       await autoEvaluateDeveloper(token, owner, repo, issueNumber, username)
       return
     }
