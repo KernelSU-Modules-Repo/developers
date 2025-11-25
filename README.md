@@ -32,19 +32,20 @@ developers/
 ### keyring.js
 - **职责**: X.509 证书签发和管理
 - **功能**:
-  - 从环境变量加载 Middle CA 证书和私钥
-  - 从 CSR 签发开发者证书
-  - 从 issue 中提取 CSR
-  - 自动评估开发者并采取相应操作
+  - 从环境变量加载 Middle CA 证书链和私钥
+  - 从公钥签发开发者证书
+  - 从 issue 中提取公钥
+  - 自动评估开发者(所有提交自动通过)
+  - 返回完整证书链(开发者证书 + Middle CA + Root CA)
   - 处理完整的 keyring issue 流程
 
-### rank.js ⭐ 新增
-- **职责**: GitHub 开发者评分和自动审核
+### rank.js ⭐
+- **职责**: GitHub 开发者评分系统
 - **功能**:
   - 基于 GitHub Readme Stats 算法计算开发者等级
   - 从 GitHub API 获取用户统计数据
-  - 评估用户是否符合自动批准/拒绝条件
-  - 生成详细的评估报告
+  - 生成详细的评估报告(包含rank信息)
+  - Rank信息仅作展示用途,不影响审核结果
 
 ### github-utils.js
 - **职责**: GitHub API 封装
@@ -98,27 +99,29 @@ Middle CA / Signer (GitHub Secrets，10年有效期)
 
 ### 审核规则
 
-| 等级范围 | 百分位 | 操作 | 说明 |
-|---------|--------|------|------|
-| 🟢 **S, A+, A** | ≤ 25% | **自动批准** | Top 25% 开发者，立即签发证书 |
-| 🟡 **A-, B+, B, B-** | 25% - 75% | **人工审核** | 等待核心开发者手动审核 |
-| 🔴 **C+, C** | > 75% | **自动拒绝** | 需提升 GitHub 贡献后重新申请 |
+| 操作 | 说明 |
+|------|------|
+| 🟢 **自动通过** | 所有提交均自动批准并签发证书 |
 
-> 📖 **详细说明**: 参见 [AUTO_REVIEW.md](AUTO_REVIEW.md)
+> 📝 **Rank信息**: 系统会自动计算并附加开发者的GitHub等级(S-C)和百分位信息，但**不影响审核结果**。所有开发者都会自动获得证书。
 
 ## 🔑 环境变量
 
 ### GitHub Secrets 配置
 
-- `MIDDLE_CA_CERT` - Middle CA 证书（PEM 格式，必需）
+- `MIDDLE_CA_CERT` - Middle CA 证书链（PEM 格式，必需）
+  - **包含**: Middle CA 证书 + Root CA 证书
+  - 用于构建完整的证书链
 - `MIDDLE_CA_KEY` - Middle CA 私钥（PEM 格式，必需）
 - `GITHUB_TOKEN` - GitHub API 令牌（自动提供）
 
 > ⚠️ **安全提示**: Root CA 私钥应离线保存，永不上传到云端
+>
+> 📝 **证书链格式**: `MIDDLE_CA_CERT` 应包含完整的证书链，签发时会将开发者证书附加在链首
 
 ## 🏷️ 支持的 Issue 标签
 
-- `[keyring]` - 开发者证书申请（提交 CSR）
+- `[keyring]` - 开发者证书申请（提交公钥）
 - `[revoke]` - 证书吊销请求
 - `[appeal]` - 申诉
 - `[issue]` - 问题反馈
@@ -128,47 +131,27 @@ Middle CA / Signer (GitHub Secrets，10年有效期)
 
 ### 1️⃣ 开发者申请证书
 
-1. 访问 [Developer Portal](https://kernelsu-modules-repo.github.io/developers/)
-2. 在 "Generate" 标签页生成私钥和 CSR
-3. 下载 `username.key.pem`（私钥，保密）和 `username.csr.pem`（CSR）
-4. 创建 `[keyring] username` issue，粘贴 CSR 内容
+1. 访问 [Developer Portal](https://developers.kernelsu.org)
+2. 在 "Generate Key" 标签页生成私钥和公钥
+3. 下载 `username.key.pem`（私钥，保密）和 `username.pub.pem`（公钥）
+4. 创建 `[keyring] username` issue，粘贴公钥内容
 
-### 2️⃣ 自动评估
+### 2️⃣ 自动评估与批准
 
 系统自动：
 1. 从 GitHub API 获取用户统计数据
-2. 计算开发者等级（S - C）
-3. 发布详细评估报告
-4. 根据等级采取行动：
-   - **Top 25%**: 自动添加 `approved` 标签
-   - **低于 75%**: 添加 `rejected` 标签并关闭 issue
-   - **中间范围**: 等待人工审核
+2. 计算开发者等级（S - C）和百分位
+3. 发布详细评估报告（包含rank信息）
+4. **自动添加 `approved` 标签**（所有提交均通过）
 
-### 3️⃣ 证书签发（自动批准后）
+> 💡 如果无法获取GitHub统计数据（私有账户、API限制等），系统仍会自动通过并说明情况。
+
+### 3️⃣ 证书签发（自动触发）
 
 1. GitHub Actions 检测到 `approved` 标签
 2. 使用 Middle CA 签发开发者证书
-3. 在 issue 评论中返回证书（`.cert.pem`）
+3. 在 issue 评论中返回**完整证书链**（包含开发者证书、Middle CA证书和Root CA证书）
 4. 自动关闭 issue
-
-### 4️⃣ 使用证书签名模块
-
-```bash
-# 1. 保存证书
-# 下载 issue 中的证书并保存为 username.cert.pem
-
-# 2. 生成模块文件清单
-find . -type f ! -path './META-INF/*' -print0 | \
-  sort -z | xargs -0 sha256sum > META-INF/ksu/MANIFEST
-
-# 3. 使用私钥签名
-openssl dgst -sha256 -sign username.key.pem \
-  -out META-INF/ksu/MANIFEST.sig META-INF/ksu/MANIFEST
-
-# 4. 打包证书链
-cp username.cert.pem META-INF/ksu/CERT
-cp middle_ca.cert.pem META-INF/ksu/CHAIN.pem
-```
 
 ## 📊 评估报告示例
 
@@ -199,15 +182,35 @@ cp middle_ca.cert.pem META-INF/ksu/CHAIN.pem
 
 **Action**: `auto_approve`
 **Reason**: Top 18.5% developer (Rank: A)
+
+---
+
+✅ **Certificate Request Auto-Approved**
+
+Your developer certificate request has been automatically approved.
+
+**Your GitHub Profile Rank**: A (Top 18.5%)
+
+**Important reminders:**
+- ⚠️ Never share your private key (`.key.pem` file) with anyone
+- ✅ Only the public key (`.pub.pem` file) should be submitted in this issue
+- 📝 Make sure your public key is properly formatted between `-----BEGIN PUBLIC KEY-----` and `-----END PUBLIC KEY-----` markers
+
+Your certificate will be issued automatically. Please wait a moment...
 ```
+
+> 📝 **注意**: 无论rank等级如何，所有提交都会自动通过。rank信息仅作为参考附加到评论中。
 
 ## 🛡️ 安全特性
 
-### 防刷榜设计
+### Rank评分系统
 
-- ✅ **Stars 权重最高（33.3%）**: 无法仅通过刷 commits 获得高分
+虽然所有申请都自动通过，但系统仍会计算并展示开发者rank信息：
+
+- ✅ **Stars 权重最高（33.3%）**: 反映项目影响力
 - ✅ **多维度评估**: 综合 6 项 GitHub 活动指标
 - ✅ **统计学方法**: 使用概率分布归一化，科学公平
+- 📊 **透明展示**: Rank信息附加在证书申请中，便于社区了解开发者背景
 
 ### 证书吊销
 
@@ -220,10 +223,10 @@ keyring/
 
 ## 🌐 开发者门户
 
-访问 [https://kernelsu-modules-repo.github.io/developers/](https://kernelsu-modules-repo.github.io/developers/) 进行：
+访问 [https://developers.kernelsu.org](https://developers.kernelsu.org) 进行：
 
-- 🔑 生成私钥和 CSR
-- 📤 提交 CSR 到 GitHub Issue
+- 🔑 生成私钥和公钥
+- 📤 提交公钥到 GitHub Issue
 - 🔍 查询证书状态
 - 🚫 申请吊销证书
 
@@ -249,21 +252,3 @@ keyring/
 - `node-forge` - 浏览器端证书操作
 - Tailwind CSS
 - Shadcn UI
-
-## 📝 变更历史
-
-### v2.0.0 (2025-11-25)
-- ✨ 从 PGP 迁移到 X.509 PKI 架构
-- ✨ 实施三级 CA 信任链
-- ✨ 添加基于 GitHub Readme Stats 的自动审核机制
-- ✨ 重写前端 UI 支持 CSR 生成和证书验证
-- 📝 完整重写设计文档和用户指南
-
-### v1.0.0
-- 🎉 初始版本（基于 PGP Web-of-Trust）
-
----
-
-**维护者**: KernelSU Core Team
-**许可证**: MIT
-**最后更新**: 2025-11-25

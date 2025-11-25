@@ -6,6 +6,7 @@ const { fetchUserStats, evaluateUser, generateReport } = require('./rank')
 
 /**
  * Load Middle CA certificate and private key from environment variables
+ * Note: MIDDLE_CA_CERT should contain the full certificate chain (Middle CA + Root CA)
  * @returns {Promise<{cert: forge.pki.Certificate, privateKey: forge.pki.PrivateKey}>}
  */
 function loadMiddleCA () {
@@ -69,7 +70,7 @@ function getCertificateFingerprint (cert) {
  * Issue developer certificate from public key
  * @param {string} publicKeyPem - Public Key in PEM format
  * @param {string} username - Developer's GitHub username
- * @returns {Promise<{certPem: string, fingerprint: string, serialNumber: string}>}
+ * @returns {Promise<{certPem: string, certChainPem: string, fingerprint: string, serialNumber: string}>}
  */
 function issueDeveloperCertificate (publicKeyPem, username) {
   const { cert: caCert, privateKey: caKey } = loadMiddleCA()
@@ -129,8 +130,14 @@ function issueDeveloperCertificate (publicKeyPem, username) {
   const certPem = forge.pki.certificateToPem(cert)
   const fingerprint = getCertificateFingerprint(cert)
 
+  // Build certificate chain (Developer Cert + Middle CA Cert which already contains Root CA)
+  // MIDDLE_CA_CERT environment variable already contains the full chain (Middle CA + Root CA)
+  const middleCaCertPem = process.env.MIDDLE_CA_CERT
+  const certChainPem = certPem + middleCaCertPem
+
   return {
     certPem,
+    certChainPem,
     fingerprint,
     serialNumber: cert.serialNumber
   }
@@ -154,64 +161,27 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
     // 生成报告
     const report = generateReport(stats, evaluation)
 
-    // 根据评估结果采取行动
-    if (evaluation.action === 'auto_approve') {
-      // Top 25% - 自动批准
-      await createComment(token, owner, repo, issueNumber, report)
-      await addLabel(token, owner, repo, issueNumber, 'approved')
-      console.log(`Auto-approved: ${username} (Rank: ${evaluation.rank.level})`)
-    } else if (evaluation.action === 'auto_reject') {
-      // 低于 75% - 自动拒绝
-      await createComment(
-        token,
-        owner,
-        repo,
-        issueNumber,
-        report + '\n\n---\n\n' +
-        '❌ **Certificate Request Rejected**\n\n' +
-        `Your GitHub profile rank (${evaluation.rank.level}, ${evaluation.rank.percentile}%) does not meet the minimum threshold for automatic approval.\n\n` +
-        '**Why was I rejected?**\n' +
-        'The KernelSU Developer Keyring requires developers to demonstrate significant contributions to the GitHub community. ' +
-        'Developers below the 75th percentile are not automatically approved to maintain the quality and security of the ecosystem.\n\n' +
-        '**What can I do?**\n' +
-        '1. Continue contributing to open source projects\n' +
-        '2. Create quality repositories that attract stars\n' +
-        '3. Participate in code reviews and pull requests\n' +
-        '4. Reapply when your GitHub profile has improved\n\n' +
-        '**Appeal Process:**\n' +
-        'If you believe this evaluation is incorrect or have extenuating circumstances, ' +
-        'please contact the core team with evidence of your contributions.\n\n' +
-        'Thank you for your interest in KernelSU module development!'
-      )
-      await addLabel(token, owner, repo, issueNumber, 'rejected')
-      await updateIssue(token, owner, repo, issueNumber, 'closed', 'not_planned')
-      console.log(`Auto-rejected: ${username} (Rank: ${evaluation.rank.level})`)
-    } else {
-      // 25% - 75% - 等待人工审核
-      await createComment(
-        token,
-        owner,
-        repo,
-        issueNumber,
-        report + '\n\n---\n\n' +
-        '⏳ **Manual Review Required**\n\n' +
-        `Your GitHub profile rank (${evaluation.rank.level}, ${evaluation.rank.percentile}%) falls in the manual review range.\n\n` +
-        '**What happens next:**\n' +
-        '1. A core developer will review your GitHub profile and public key\n' +
-        '2. They may add the `approved` label if your contributions align with our requirements\n' +
-        '3. Once approved, your certificate will be automatically issued\n\n' +
-        '**Please wait patiently for manual approval.** This process helps us maintain the security and integrity of the KernelSU module ecosystem.\n\n' +
-        '**Important reminders:**\n' +
-        '- ⚠️ Never share your private key (`.key.pem` file) with anyone\n' +
-        '- ✅ Only the public key (`.pub.pem` file) should be submitted in this issue\n' +
-        '- 📝 Make sure your public key is properly formatted between `-----BEGIN PUBLIC KEY-----` and `-----END PUBLIC KEY-----` markers\n\n' +
-        'If you have any questions, please refer to our [Developer Portal](https://kernelsu-modules-repo.github.io/developers/).'
-      )
-      console.log(`Manual review required: ${username} (Rank: ${evaluation.rank.level})`)
-    }
+    // 所有提交自动通过,只附加rank信息
+    await createComment(
+      token,
+      owner,
+      repo,
+      issueNumber,
+      report + '\n\n---\n\n' +
+      '✅ **Certificate Request Auto-Approved**\n\n' +
+      `Your developer certificate request has been automatically approved.\n\n` +
+      `**Your GitHub Profile Rank**: ${evaluation.rank.level} (Top ${evaluation.rank.percentile.toFixed(1)}%)\n\n` +
+      '**Important reminders:**\n' +
+      '- ⚠️ Never share your private key (`.key.pem` file) with anyone\n' +
+      '- ✅ Only the public key (`.pub.pem` file) should be submitted in this issue\n' +
+      '- 📝 Make sure your public key is properly formatted between `-----BEGIN PUBLIC KEY-----` and `-----END PUBLIC KEY-----` markers\n\n' +
+      'Your certificate will be issued automatically. Please wait a moment...'
+    )
+    await addLabel(token, owner, repo, issueNumber, 'approved')
+    console.log(`Auto-approved: ${username} (Rank: ${evaluation.rank.level})`)
   } catch (error) {
     console.error('Error in auto-evaluation:', error)
-    // 如果评估失败，回退到原来的手动审核流程
+    // 如果评估失败，仍然自动通过但不显示rank信息
     await createComment(
       token,
       owner,
@@ -219,17 +189,19 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
       issueNumber,
       `Dear @${username},\n\n` +
       'Thank you for submitting your public key to the KernelSU Developer Keyring!\n\n' +
-      '⚠️ **Unable to automatically evaluate your profile.** This may be due to:\n' +
+      '⚠️ **Unable to fetch your GitHub profile statistics.** This may be due to:\n' +
       '- Private profile settings\n' +
       '- API rate limits\n' +
       '- Network issues\n\n' +
-      'Your request will be manually reviewed by a core developer.\n\n' +
+      'Your request has been automatically approved without rank evaluation.\n\n' +
       '**Important reminders:**\n' +
       '- ⚠️ Never share your private key (`.key.pem` file) with anyone\n' +
       '- ✅ Only the public key (`.pub.pem` file) should be submitted in this issue\n' +
       '- 📝 Make sure your public key is properly formatted\n\n' +
-      'If you have any questions, please refer to our [Developer Portal](https://kernelsu-modules-repo.github.io/developers/).'
+      'Your certificate will be issued automatically. Please wait a moment...'
     )
+    await addLabel(token, owner, repo, issueNumber, 'approved')
+    console.log(`Auto-approved (no rank): ${username}`)
   }
 }
 
@@ -335,14 +307,18 @@ async function handleKeyringIssue () {
       `- **Fingerprint (SHA-256)**: \`${result.fingerprint}\`\n` +
       `- **Issued by**: @${approver.login} (Core Developer)\n` +
       `- **Valid for**: 1 year\n\n` +
-      `## Developer Certificate\n\n` +
-      `Please save this certificate:\n\n` +
-      `\`\`\`\n${result.certPem}\`\`\`\n\n` +
+      `## Developer Certificate (with full certificate chain)\n\n` +
+      `Please save this certificate chain:\n\n` +
+      `\`\`\`\n${result.certChainPem}\`\`\`\n\n` +
       `---\n\n` +
+      `**What's included:**\n` +
+      `- Your developer certificate\n` +
+      `- Middle CA certificate\n` +
+      `- Root CA certificate\n\n` +
       `**Next Steps**:\n` +
-      `1. Download and save this certificate as \`${username}.cert.pem\`\n` +
+      `1. Download and save this certificate chain as \`${username}.cert.pem\`\n` +
       `2. Keep your private key (\`${username}.key.pem\`) secure - never share it!\n` +
-      `3. Use your private key to sign KernelSU modules\n\n` +
+      `3. Use your private key and certificate chain to sign KernelSU modules\n\n` +
       `**For Module Users**:\n` +
       `This certificate can be used to verify module signatures from @${username}.`
     )
