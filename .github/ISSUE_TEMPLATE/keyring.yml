@@ -1,0 +1,51 @@
+name: 🔑 Submit Developer Public Key
+description: Submit your public key to join the KernelSU Developer Keyring
+title: "[keyring] "
+labels: ["keyring"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Submit Developer Public Key
+
+        Thank you for joining the KernelSU Developer Keyring! Please fill in the information below.
+
+        **Important:**
+        - ⚠️ Never share your private key (`.key.pem` file)
+        - ✅ Only submit the public key (`.pub.pem` file)
+        - 📝 Generate your key pair at [Developer Portal](https://developers.kernelsu.org)
+
+  - type: input
+    id: username
+    attributes:
+      label: GitHub Username
+      description: Your GitHub username (without @)
+      placeholder: username
+    validations:
+      required: true
+
+  - type: textarea
+    id: public_key
+    attributes:
+      label: Public Key
+      description: Paste your public key here (P-256 or P-384 ECC key)
+      placeholder: |
+        -----BEGIN PUBLIC KEY-----
+        ...
+        -----END PUBLIC KEY-----
+      render: text
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgments
+    attributes:
+      label: Acknowledgments
+      description: Please confirm that you understand the following
+      options:
+        - label: I have generated this key pair using the [Developer Portal](https://developers.kernelsu.org)
+          required: true
+        - label: I understand that I must keep my private key secure and never share it
+          required: true
+        - label: I am submitting only the public key (not the private key)
+          required: true

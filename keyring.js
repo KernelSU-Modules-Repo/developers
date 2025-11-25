@@ -339,7 +339,7 @@ async function handleKeyringIssue () {
         '-----END PUBLIC KEY-----\n' +
         '```\n\n' +
         '**How to generate a key pair:**\n' +
-        '1. Visit our [Developer Portal](https://kernelsu-modules-repo.github.io/developers/)\n' +
+        '1. Visit our [Developer Portal](https://developers.kernelsu.org)\n' +
         '2. Use the "Generate Key" tab to create your private key and public key\n' +
         '3. Submit the public key (NOT the private key) in this issue'
       )

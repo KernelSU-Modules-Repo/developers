@@ -1,0 +1,65 @@
+name: 🚫 Revoke Developer Certificate
+description: Request to revoke a developer certificate
+title: "[revoke] "
+labels: ["revoke"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Revoke Developer Certificate
+
+        Use this form to request revocation of a developer certificate.
+
+        **Common reasons for revocation:**
+        - 🔓 Private key has been compromised
+        - 🔑 Private key has been lost
+        - 🔄 Certificate is being replaced (superseded)
+
+  - type: input
+    id: username
+    attributes:
+      label: GitHub Username
+      description: Your GitHub username (without @)
+      placeholder: username
+    validations:
+      required: true
+
+  - type: input
+    id: fingerprint
+    attributes:
+      label: Certificate Fingerprint
+      description: The SHA-256 fingerprint of the certificate to revoke
+      placeholder: "AA:BB:CC:DD:EE:FF:..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reason
+    attributes:
+      label: Revocation Reason
+      description: Why are you requesting this revocation?
+      options:
+        - Compromised (private key exposed)
+        - Lost (private key lost/inaccessible)
+        - Superseded (replacing with new certificate)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Additional Details
+      description: Please provide any additional context or information
+      placeholder: Optional details about the revocation request...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: acknowledgments
+    attributes:
+      label: Acknowledgments
+      description: Please confirm
+      options:
+        - label: I confirm that I am the owner of this certificate or have authorization to request its revocation
+          required: true

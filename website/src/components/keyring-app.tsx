@@ -351,9 +351,13 @@ function SubmitForm({ t, initialPublicKey }: { t: typeof locales.en; initialPubl
   };
 
   const onSubmit = (data: z.infer<typeof submitSchema>) => {
-    const title = `[keyring] ${data.username}`;
-    const body = `## Submit Developer Public Key\n\n**Public Key**:\n\n\`\`\`\n${data.csr}\n\`\`\`\n\n---\nPlease review and add \`approved\` label to issue certificate.`;
-    window.open(`https://github.com/KernelSU-Modules-Repo/developers/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank");
+    // Use GitHub Issue Template with auto-filled data
+    const params = new URLSearchParams({
+      template: 'keyring.yml',
+      username: data.username,
+      public_key: data.csr
+    });
+    window.open(`https://github.com/KernelSU-Modules-Repo/developers/issues/new?${params.toString()}`, "_blank");
   };
 
   return (
@@ -561,9 +565,15 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
   };
 
   const onSubmit = (data: z.infer<typeof revokeSchema>) => {
-    const title = `[revoke] ${data.fingerprint.substring(0, 20)}...`;
-    const body = `## Revoke Developer Certificate\n\n**Requested by**: @${data.username}\n**Certificate Fingerprint**: \`${data.fingerprint}\`\n**Reason**: ${data.reason}\n\n**Details**:\n${data.details || "N/A"}`;
-    window.open(`https://github.com/KernelSU-Modules-Repo/developers/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank");
+    // Use GitHub Issue Template with auto-filled data
+    const params = new URLSearchParams({
+      template: 'revoke.yml',
+      username: data.username,
+      fingerprint: data.fingerprint,
+      reason: data.reason,
+      details: data.details || ''
+    });
+    window.open(`https://github.com/KernelSU-Modules-Repo/developers/issues/new?${params.toString()}`, "_blank");
   };
 
   return (
