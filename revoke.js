@@ -1,6 +1,7 @@
 const { context } = require('@actions/github')
 const { getRepo, createComment, closeIssue, addLabel } = require('./github-utils')
 const { verifyCertificateOwnership, isOrgAdmin } = require('./cert-manager')
+const { updateAndCommitCRL } = require('./crl-utils')
 
 /**
  * 从 issue body 中提取序列号
@@ -156,6 +157,9 @@ async function handleRevokeIssue () {
     await closeIssue(token, owner, repo, issueNumber, true)
 
     console.log(`Certificate ${serialNumber} revoked successfully`)
+
+    // 更新 CRL 并提交到仓库（自动触发网站部署）
+    await updateAndCommitCRL(token, owner, repo, `Certificate revoked: ${serialNumber.substring(0, 16)}...`)
   } catch (error) {
     console.error('Error handling revoke issue:', error)
     console.error('Error stack:', error.stack)
