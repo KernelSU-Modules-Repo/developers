@@ -40,9 +40,9 @@ body:
       label: Revocation Reason
       description: Why are you requesting this revocation?
       options:
-        - Compromised (private key exposed)
-        - Lost (private key lost/inaccessible)
-        - Superseded (replacing with new certificate)
+        - Compromised
+        - Lost
+        - Superseded
         - Other
     validations:
       required: true

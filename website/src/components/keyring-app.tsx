@@ -595,9 +595,9 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
           <Select onValueChange={v => form.setValue("reason", v)}>
             <SelectTrigger><SelectValue placeholder={t.revoke.reason} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="Compromised (private key exposed)">{t.revoke.reasons.compromised}</SelectItem>
-              <SelectItem value="Lost (private key lost/inaccessible)">{t.revoke.reasons.lost}</SelectItem>
-              <SelectItem value="Superseded (replacing with new certificate)">{t.revoke.reasons.superseded}</SelectItem>
+              <SelectItem value="Compromised">{t.revoke.reasons.compromised}</SelectItem>
+              <SelectItem value="Lost">{t.revoke.reasons.lost}</SelectItem>
+              <SelectItem value="Superseded">{t.revoke.reasons.superseded}</SelectItem>
               <SelectItem value="Other">Other</SelectItem>
             </SelectContent>
           </Select>
