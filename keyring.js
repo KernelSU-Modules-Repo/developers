@@ -190,9 +190,9 @@ async function issueDeveloperCertificate (publicKeyPem, username) {
   const fingerprint = await getCertificateFingerprint(cert)
   const serialNumber = cert.serialNumber
 
-  // Build certificate chain
+  // Build certificate chain (ensure proper newline between certificates)
   const middleCaCertPem = process.env.MIDDLE_CA_CERT
-  const certChainPem = certPem + middleCaCertPem
+  const certChainPem = certPem.trimEnd() + '\n' + middleCaCertPem + '\n'
 
   return {
     certPem,
@@ -379,7 +379,7 @@ async function handleKeyringIssue () {
       `- **Valid for**: 1 year\n\n` +
       `## Developer Certificate (with full certificate chain)\n\n` +
       `Please save this certificate chain:\n\n` +
-      `\`\`\`\n${result.certChainPem}\`\`\`\n\n` +
+      `\`\`\`\n${result.certChainPem}\n\`\`\`\n\n` +
       `---\n\n` +
       `**What's included:**\n` +
       `- Your developer certificate\n` +
