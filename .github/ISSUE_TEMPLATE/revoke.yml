@@ -1,12 +1,13 @@
 name: 🚫 Revoke Developer Certificate
-description: Request to revoke a developer certificate
-title: "[revoke] "
+description: Please use the Developer Portal (https://developers.kernelsu.org) to request revocation. This template is auto-filled by the portal.
 labels: ["revoke"]
 body:
   - type: markdown
     attributes:
       value: |
         ## Revoke Developer Certificate
+
+        > **💡 Recommended:** Please use the [Developer Portal](https://developers.kernelsu.org) to request revocation. The portal will automatically fill this form for you.
 
         Use this form to request revocation of a developer certificate.
 

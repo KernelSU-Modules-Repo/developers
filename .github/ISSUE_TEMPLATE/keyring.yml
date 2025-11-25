@@ -1,6 +1,5 @@
 name: 🔑 Submit Developer Public Key
-description: Submit your public key to join the KernelSU Developer Keyring
-title: "[keyring] "
+description: Please use the Developer Portal (https://developers.kernelsu.org) to submit your public key. This template is auto-filled by the portal.
 labels: ["keyring"]
 body:
   - type: markdown
@@ -8,7 +7,9 @@ body:
       value: |
         ## Submit Developer Public Key
 
-        Thank you for joining the KernelSU Developer Keyring! Please fill in the information below.
+        > **💡 Recommended:** Please use the [Developer Portal](https://developers.kernelsu.org) to submit your public key. The portal will automatically fill this form for you.
+
+        Thank you for joining KernelSU Module Developers!
 
         **Important:**
         - ⚠️ Never share your private key (`.key.pem` file)
