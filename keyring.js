@@ -1,15 +1,19 @@
 const core = require('@actions/core')
 const { context } = require('@actions/github')
-const forge = require('node-forge')
+const crypto = require('crypto')
+const x509 = require('@peculiar/x509')
 const { getRepo, createComment, removeLabel, updateIssue, addLabel } = require('./github-utils')
 const { fetchUserStats, evaluateUser, generateReport } = require('./rank')
+
+// Set crypto provider for @peculiar/x509
+x509.cryptoProvider.set(crypto.webcrypto)
 
 /**
  * Load Middle CA certificate and private key from environment variables
  * Note: MIDDLE_CA_CERT should contain the full certificate chain (Middle CA + Root CA)
- * @returns {Promise<{cert: forge.pki.Certificate, privateKey: forge.pki.PrivateKey}>}
+ * @returns {{cert: x509.X509Certificate, privateKey: CryptoKey}}
  */
-function loadMiddleCA () {
+async function loadMiddleCA () {
   const certPem = process.env.MIDDLE_CA_CERT
   const keyPem = process.env.MIDDLE_CA_KEY
 
@@ -21,8 +25,28 @@ function loadMiddleCA () {
     throw new Error('Middle CA private key not found: MIDDLE_CA_KEY environment variable not set')
   }
 
-  const cert = forge.pki.certificateFromPem(certPem)
-  const privateKey = forge.pki.privateKeyFromPem(keyPem)
+  // Parse certificate
+  const cert = new x509.X509Certificate(certPem)
+
+  // Parse private key - convert Node.js KeyObject to CryptoKey
+  const nodeKey = crypto.createPrivateKey(keyPem)
+  const keyDer = nodeKey.export({ type: 'pkcs8', format: 'der' })
+
+  // Determine algorithm based on key type
+  const keyDetails = nodeKey.asymmetricKeyDetails
+  const namedCurve = keyDetails.namedCurve
+  const algorithm = {
+    name: 'ECDSA',
+    namedCurve: namedCurve === 'prime256v1' || namedCurve === 'secp256r1' ? 'P-256' : 'P-384'
+  }
+
+  const privateKey = await crypto.webcrypto.subtle.importKey(
+    'pkcs8',
+    keyDer,
+    algorithm,
+    true,
+    ['sign']
+  )
 
   return { cert, privateKey }
 }
@@ -45,25 +69,22 @@ function extractPublicKeyFromIssue (issueBody) {
 
 /**
  * Generate a random serial number for certificate
- * @returns {string} Hex string serial number
+ * @returns {string} Serial number as hex string
  */
 function generateSerialNumber () {
-  const bytes = forge.random.getBytesSync(16)
-  return forge.util.bytesToHex(bytes)
+  return crypto.randomBytes(16).toString('hex')
 }
 
 /**
  * Calculate certificate fingerprint (SHA-256)
- * @param {forge.pki.Certificate} cert - Certificate
+ * @param {x509.X509Certificate} cert - Certificate
  * @returns {string} Fingerprint in colon-separated hex format
  */
-function getCertificateFingerprint (cert) {
-  const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes()
-  const md = forge.md.sha256.create()
-  md.update(der)
-  const digest = md.digest().toHex()
+async function getCertificateFingerprint (cert) {
+  const thumbprint = await cert.getThumbprint(crypto.webcrypto)
+  const hex = Buffer.from(thumbprint).toString('hex')
   // Format as XX:XX:XX:XX...
-  return digest.toUpperCase().match(/.{2}/g).join(':')
+  return hex.toUpperCase().match(/.{2}/g).join(':')
 }
 
 /**
@@ -72,90 +93,104 @@ function getCertificateFingerprint (cert) {
  * @param {string} username - Developer's GitHub username
  * @returns {Promise<{certPem: string, certChainPem: string, fingerprint: string, serialNumber: string}>}
  */
-function issueDeveloperCertificate (publicKeyPem, username) {
-  const { cert: caCert, privateKey: caKey } = loadMiddleCA()
+async function issueDeveloperCertificate (publicKeyPem, username) {
+  const { cert: caCert, privateKey: caKey } = await loadMiddleCA()
 
-  // Parse public key - support both ECC and RSA for compatibility
+  // Parse ECC public key (P-256/P-384 only)
   let publicKey
-  try {
-    // Try parsing as standard PEM format
-    publicKey = forge.pki.publicKeyFromPem(publicKeyPem)
-    console.log('Public key parsed successfully')
-  } catch (error) {
-    console.error('Failed to parse public key with publicKeyFromPem:', error.message)
+  let curveInfo
 
-    // Try alternative parsing methods for ECC keys
-    try {
-      // Parse the PEM and extract the SubjectPublicKeyInfo
-      const msg = forge.pem.decode(publicKeyPem)[0]
-      const obj = forge.asn1.fromDer(msg.body)
-      publicKey = forge.pki.publicKeyFromAsn1(obj)
-      console.log('Public key parsed using ASN1 method')
-    } catch (asn1Error) {
-      console.error('Failed to parse public key with ASN1 method:', asn1Error.message)
+  try {
+    // Parse public key using Node.js crypto
+    publicKey = crypto.createPublicKey(publicKeyPem)
+
+    // Get key details
+    const keyDetails = publicKey.asymmetricKeyDetails
+    if (!keyDetails) {
+      throw new Error('Unable to extract key details')
+    }
+
+    // Verify it's an EC key
+    if (publicKey.asymmetricKeyType !== 'ec') {
       throw new Error(
-        'Invalid public key format. Please ensure you are submitting a valid ECC (P-256/P-384) or RSA public key. ' +
-        'Generate a proper key pair from the Developer Portal.'
+        `Unsupported key type (${publicKey.asymmetricKeyType}). Only ECC keys (P-256/P-384) are supported.`
       )
     }
+
+    // Verify curve is P-256 or P-384
+    const supportedCurves = {
+      'prime256v1': 'P-256',
+      'secp256r1': 'P-256',
+      'secp384r1': 'P-384'
+    }
+
+    const namedCurve = keyDetails.namedCurve
+    if (!supportedCurves[namedCurve]) {
+      throw new Error(
+        `Unsupported ECC curve (${namedCurve}). Only P-256 and P-384 curves are supported. ` +
+        'Please generate a new key pair with P-256 or P-384 from the Developer Portal.'
+      )
+    }
+
+    curveInfo = supportedCurves[namedCurve]
+    console.log('ECC Curve:', curveInfo)
+    console.log('Public key parsed successfully')
+
+  } catch (error) {
+    console.error('Failed to parse public key:', error.message)
+    if (error.message.includes('Unsupported')) {
+      throw error // Re-throw our custom errors
+    }
+    throw new Error(
+      'Invalid public key format. Please ensure you are submitting a valid ECC public key (P-256 or P-384). ' +
+      'Generate a proper key pair from the Developer Portal.'
+    )
   }
 
-  console.log('Public key type:', publicKey.constructor.name)
+  // Convert public key to CryptoKey
+  const publicKeyDer = publicKey.export({ type: 'spki', format: 'der' })
+  const algorithm = {
+    name: 'ECDSA',
+    namedCurve: curveInfo
+  }
+  const cryptoPublicKey = await crypto.webcrypto.subtle.importKey(
+    'spki',
+    publicKeyDer,
+    algorithm,
+    true,
+    ['verify']
+  )
 
-  // Create certificate
-  const cert = forge.pki.createCertificate()
-  cert.publicKey = publicKey
-  cert.serialNumber = generateSerialNumber()
+  // Determine hash algorithm: P-256 uses SHA-256, P-384 uses SHA-512
+  const hashAlgorithm = curveInfo === 'P-256' ? 'SHA-256' : 'SHA-512'
 
-  // Validity: 1 year
-  const now = new Date()
-  cert.validity.notBefore = now
-  cert.validity.notAfter = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000) // 1 year
-
-  // Subject
-  cert.setSubject([
-    { name: 'commonName', value: username },
-    { name: 'organizationName', value: 'KernelSU Module Developers' }
-  ])
-
-  // Issuer (from CA)
-  cert.setIssuer(caCert.subject.attributes)
-
-  // Extensions
-  cert.setExtensions([
-    {
-      name: 'basicConstraints',
-      cA: false,
-      critical: true
+  // Create certificate using @peculiar/x509
+  const cert = await x509.X509CertificateGenerator.create({
+    serialNumber: generateSerialNumber(),
+    subject: `CN=${username}, O=KernelSU Module Developers`,
+    issuer: caCert.subject,
+    notBefore: new Date(),
+    notAfter: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
+    publicKey: cryptoPublicKey,
+    signingKey: caKey,
+    signingAlgorithm: {
+      name: 'ECDSA',
+      hash: hashAlgorithm
     },
-    {
-      name: 'keyUsage',
-      digitalSignature: true,
-      critical: true
-    },
-    {
-      name: 'extKeyUsage',
-      codeSigning: true
-    },
-    {
-      name: 'subjectKeyIdentifier'
-    },
-    {
-      name: 'authorityKeyIdentifier',
-      keyIdentifier: true,
-      authorityCertIssuer: true,
-      serialNumber: true
-    }
-  ])
+    extensions: [
+      new x509.BasicConstraintsExtension(false, undefined, true), // cA: false, critical: true
+      new x509.KeyUsagesExtension(x509.KeyUsageFlags.digitalSignature, true), // critical: true
+      new x509.ExtendedKeyUsageExtension(['1.3.6.1.5.5.7.3.3']), // codeSigning
+      await x509.SubjectKeyIdentifierExtension.create(cryptoPublicKey),
+      await x509.AuthorityKeyIdentifierExtension.create(caCert)
+    ]
+  })
 
-  // Sign with CA private key (SHA-256)
-  cert.sign(caKey, forge.md.sha256.create())
+  const certPem = cert.toString('pem')
+  const fingerprint = await getCertificateFingerprint(cert)
+  const serialNumber = cert.serialNumber
 
-  const certPem = forge.pki.certificateToPem(cert)
-  const fingerprint = getCertificateFingerprint(cert)
-
-  // Build certificate chain (Developer Cert + Middle CA Cert which already contains Root CA)
-  // MIDDLE_CA_CERT environment variable already contains the full chain (Middle CA + Root CA)
+  // Build certificate chain
   const middleCaCertPem = process.env.MIDDLE_CA_CERT
   const certChainPem = certPem + middleCaCertPem
 
@@ -163,7 +198,7 @@ function issueDeveloperCertificate (publicKeyPem, username) {
     certPem,
     certChainPem,
     fingerprint,
-    serialNumber: cert.serialNumber
+    serialNumber
   }
 }
 
@@ -314,7 +349,7 @@ async function handleKeyringIssue () {
 
     let result
     try {
-      result = issueDeveloperCertificate(publicKeyPem, username)
+      result = await issueDeveloperCertificate(publicKeyPem, username)
     } catch (err) {
       await createComment(
         token,
