@@ -1,0 +1,46 @@
+<svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+    <mask id="mask1">
+        <g>
+            <defs>
+                <clipPath id="left-bottom-half">
+                    <path fill="black" d="M -500,-500 L 1000,1000 L -500,1000"></path>
+                </clipPath>
+            </defs>
+            <circle cx="250" cy="250" r="500" fill="#ffffff" clip-path="url(#left-bottom-half)" />
+            <animateTransform attributeName="transform" attributeType="XML" type="rotate"
+                values="0,250,250;90,250,250;180,250,250;270,250,250;360,250,250;"
+                keySplines="0.8 0 0.8 1; 0.8 0 0.8 1; 0.8 0 0.8 1; 0.8 0 0.8 1" calcMode="spline" dur="2.5s"
+                repeatCount="0.5" fill="freeze" />
+        </g>
+        <path fill="black" d="M -500,-500 L 1000,1000 L -500,1000"></path>
+    </mask>
+
+    <rect x="25" y="25" width="450" height="450" fill="#f5f5f5" rx="110"></rect>
+
+    <g transform="translate(250,250) scale(0.78) translate(-250,-250)">
+        <g>
+            <rect x="60" y="60" width="380" height="380" stroke="black" stroke-width="20" fill="none"
+                mask="url(#mask1)" />
+        </g>
+        <g transform="rotate(180,250,250)">
+            <rect x="60" y="60" width="380" height="380" stroke="black" stroke-width="20" fill="none"
+                mask="url(#mask1)" />
+        </g>
+        <g transform="translate(50,50)">
+            <rect width="210" height="210">
+                <animateTransform attributeName="transform" attributeType="XML" type="translate"
+                    values="0,0;190,0;190,190;0,190;0,0" keyTimes="0;0.25;0.5;0.75;1"
+                    keySplines="0.8 0 0.8 1; 0.8 0 0.8 1; 0.8 0 0.8 1; 0.8 0 0.8 1" calcMode="spline" dur="2.5s"
+                    repeatCount="0.5" fill="freeze" />
+            </rect>
+        </g>
+        <g transform="translate(50,50) rotate(180,200,200)">
+            <rect width="210" height="210">
+                <animateTransform attributeName="transform" attributeType="XML" type="translate"
+                    values="0,0;190,0;190,190;0,190;0,0" keyTimes="0;0.25;0.5;0.75;1"
+                    keySplines="0.8 0 0.8 1; 0.8 0 0.8 1; 0.8 0 0.8 1; 0.8 0 0.8 1" calcMode="spline" dur="2.5s"
+                    repeatCount="0.5" fill="freeze" />
+            </rect>
+        </g>
+    </g>
+</svg>
