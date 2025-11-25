@@ -75,8 +75,32 @@ function getCertificateFingerprint (cert) {
 function issueDeveloperCertificate (publicKeyPem, username) {
   const { cert: caCert, privateKey: caKey } = loadMiddleCA()
 
-  // Parse public key
-  const publicKey = forge.pki.publicKeyFromPem(publicKeyPem)
+  // Parse public key - support both ECC and RSA for compatibility
+  let publicKey
+  try {
+    // Try parsing as standard PEM format
+    publicKey = forge.pki.publicKeyFromPem(publicKeyPem)
+    console.log('Public key parsed successfully')
+  } catch (error) {
+    console.error('Failed to parse public key with publicKeyFromPem:', error.message)
+
+    // Try alternative parsing methods for ECC keys
+    try {
+      // Parse the PEM and extract the SubjectPublicKeyInfo
+      const msg = forge.pem.decode(publicKeyPem)[0]
+      const obj = forge.asn1.fromDer(msg.body)
+      publicKey = forge.pki.publicKeyFromAsn1(obj)
+      console.log('Public key parsed using ASN1 method')
+    } catch (asn1Error) {
+      console.error('Failed to parse public key with ASN1 method:', asn1Error.message)
+      throw new Error(
+        'Invalid public key format. Please ensure you are submitting a valid ECC (P-256/P-384) or RSA public key. ' +
+        'Generate a proper key pair from the Developer Portal.'
+      )
+    }
+  }
+
+  console.log('Public key type:', publicKey.constructor.name)
 
   // Create certificate
   const cert = forge.pki.createCertificate()
