@@ -3,6 +3,10 @@ on:
   issues:
     types: [opened, labeled]
 
+permissions:
+  contents: write        # 允许提交和推送到仓库
+  issues: write          # 允许创建评论和修改 issue
+
 jobs:
   run:
     name: Run Bot
@@ -23,5 +27,7 @@ jobs:
         run: bun run index.js
         env:
           REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           MIDDLE_CA_KEY: ${{ secrets.MIDDLE_CA_KEY }}
           MIDDLE_CA_CERT: ${{ secrets.MIDDLE_CA_CERT }}
