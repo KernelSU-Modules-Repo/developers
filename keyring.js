@@ -2,7 +2,7 @@ const core = require('@actions/core')
 const { context } = require('@actions/github')
 const crypto = require('crypto')
 const x509 = require('@peculiar/x509')
-const { getRepo, createComment, removeLabel, updateIssue, addLabel } = require('./github-utils')
+const { getRepo, createComment, removeLabel, closeIssue, addLabel } = require('./github-utils')
 const { fetchUserStats, evaluateUser, generateReport } = require('./rank')
 
 // Set crypto provider for @peculiar/x509
@@ -393,7 +393,7 @@ async function handleKeyringIssue () {
       `This certificate can be used to verify module signatures from @${username}.`
     )
 
-    await updateIssue(token, owner, repo, issueNumber, 'closed', 'completed')
+    await closeIssue(token, owner, repo, issueNumber, true)
   } catch (error) {
     core.setFailed(error.message)
     console.error('Error handling keyring issue:', error)
