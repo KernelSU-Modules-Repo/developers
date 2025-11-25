@@ -22,13 +22,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 // Zod Schemas
 const genSchema = z.object({
-  name: z.string().min(2, "Name is too short"),
-  email: z.string().email("Invalid email address"),
+  curve: z.enum(["P-256", "P-384"]),
 });
 
 const submitSchema = z.object({
   username: z.string().min(1, "Username required"),
-  csr: z.string().includes("BEGIN CERTIFICATE REQUEST", { message: "Invalid CSR" }),
+  csr: z.string().min(100, "Public key is required"),
 });
 
 const revokeSchema = z.object({
@@ -95,9 +94,12 @@ const parseCertFile = async (file: File): Promise<{ fingerprint: string, text: s
 
 export function KeyringApp() {
   const [lang, setLang] = useState<LocaleKey>("en");
+  const [generatedPublicKey, setGeneratedPublicKey] = useState<string>("");
+  const [mounted, setMounted] = useState(false);
   const t = locales[lang];
 
   useEffect(() => {
+    setMounted(true);
     const defaultLang = navigator.language.startsWith("zh") ? "zh" : "en";
     setLang(defaultLang);
   }, []);
@@ -107,8 +109,8 @@ export function KeyringApp() {
       {/* Header */}
       <div className="max-w-4xl w-full flex justify-between items-center mb-8">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-600 rounded-lg shadow-lg shadow-indigo-500/20">
-            <ShieldCheck className="w-6 h-6 text-white" />
+          <div className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-lg">
+            <img src="/logo.svg" alt="KernelSU Logo" className="w-8 h-8" />
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">{t.title}</h1>
@@ -123,23 +125,37 @@ export function KeyringApp() {
 
       {/* Main Content */}
       <Card className="max-w-4xl w-full shadow-xl border-slate-200 dark:border-slate-800">
-        <Tabs defaultValue="generate" className="w-full">
-          <div className="border-b px-6 py-2 bg-slate-50/50 dark:bg-slate-900/50">
-            <TabsList className="grid w-full grid-cols-4 bg-slate-200/50 dark:bg-slate-800/50">
-              <TabsTrigger value="generate">{t.tabs.generate}</TabsTrigger>
-              <TabsTrigger value="submit">{t.tabs.submit}</TabsTrigger>
-              <TabsTrigger value="query">{t.tabs.query}</TabsTrigger>
-              <TabsTrigger value="revoke">{t.tabs.revoke}</TabsTrigger>
-            </TabsList>
-          </div>
+        {mounted ? (
+          <Tabs defaultValue="generate" className="w-full">
+            <div className="border-b px-6 py-2 bg-slate-50/50 dark:bg-slate-900/50">
+              <TabsList className="grid w-full grid-cols-4 bg-slate-200/50 dark:bg-slate-800/50">
+                <TabsTrigger value="generate">{t.tabs.generate}</TabsTrigger>
+                <TabsTrigger value="submit">{t.tabs.submit}</TabsTrigger>
+                <TabsTrigger value="query">{t.tabs.query}</TabsTrigger>
+                <TabsTrigger value="revoke">{t.tabs.revoke}</TabsTrigger>
+              </TabsList>
+            </div>
 
-          <div className="p-6">
-            <TabsContent value="generate"><GenerateForm t={t} /></TabsContent>
-            <TabsContent value="submit"><SubmitForm t={t} /></TabsContent>
-            <TabsContent value="query"><QueryForm t={t} /></TabsContent>
-            <TabsContent value="revoke"><RevokeForm t={t} /></TabsContent>
+            <div className="p-6">
+              <TabsContent value="generate" forceMount className="data-[state=inactive]:hidden">
+                <GenerateForm t={t} onGenerated={setGeneratedPublicKey} />
+              </TabsContent>
+              <TabsContent value="submit" forceMount className="data-[state=inactive]:hidden">
+                <SubmitForm t={t} initialPublicKey={generatedPublicKey} />
+              </TabsContent>
+              <TabsContent value="query" forceMount className="data-[state=inactive]:hidden">
+                <QueryForm t={t} />
+              </TabsContent>
+              <TabsContent value="revoke" forceMount className="data-[state=inactive]:hidden">
+                <RevokeForm t={t} />
+              </TabsContent>
+            </div>
+          </Tabs>
+        ) : (
+          <div className="p-6 min-h-[400px] flex items-center justify-center">
+            <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
           </div>
-        </Tabs>
+        )}
       </Card>
 
       <footer className="mt-12 text-center text-sm text-slate-400">
@@ -151,50 +167,75 @@ export function KeyringApp() {
 
 // --- Sub Components ---
 
-function GenerateForm({ t }: { t: typeof locales.en }) {
+function GenerateForm({ t, onGenerated }: { t: typeof locales.en; onGenerated: (publicKey: string) => void }) {
   const [keys, setKeys] = useState<{
     privateKey: string;
-    csr: string;
+    publicKey: string;
     fingerprint: string;
-    name: string
   } | null>(null);
-  const form = useForm<z.infer<typeof genSchema>>({ resolver: zodResolver(genSchema) });
+  const form = useForm<z.infer<typeof genSchema>>({
+    resolver: zodResolver(genSchema),
+    defaultValues: {
+      curve: "P-256"
+    }
+  });
   const [loading, setLoading] = useState(false);
 
   const onSubmit = async (data: z.infer<typeof genSchema>) => {
     setLoading(true);
     try {
-      // Generate RSA key pair (2048 bits for compatibility)
-      const keypair = forge.pki.rsa.generateKeyPair({ bits: 2048, workers: -1 });
+      let privateKeyPem: string;
+      let publicKeyPem: string;
 
-      // Create CSR
-      const csr = forge.pki.createCertificationRequest();
-      csr.publicKey = keypair.publicKey;
-      csr.setSubject([
-        { name: 'commonName', value: data.name },
-        { name: 'emailAddress', value: data.email },
-        { name: 'organizationName', value: 'KernelSU Module Developers' }
-      ]);
+      // Generate EC key pair based on selected curve
+      if (data.curve === "P-256" || data.curve === "P-384") {
+        // Generate EC keys using Web Crypto API
+        const curveName = data.curve === "P-256" ? "P-256" : "P-384";
+        const cryptoKeypair = await window.crypto.subtle.generateKey(
+          {
+            name: "ECDSA",
+            namedCurve: curveName,
+          },
+          true,
+          ["sign", "verify"]
+        );
 
-      // Sign CSR with private key
-      csr.sign(keypair.privateKey, forge.md.sha256.create());
+        // Export private key to PKCS#8 format
+        const privateKeyBuffer = await window.crypto.subtle.exportKey("pkcs8", cryptoKeypair.privateKey);
+        const privateKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(privateKeyBuffer)));
+        privateKeyPem = `-----BEGIN PRIVATE KEY-----\n${privateKeyBase64.match(/.{1,64}/g)?.join('\n')}\n-----END PRIVATE KEY-----`;
 
-      // Convert to PEM format
-      const privateKeyPem = forge.pki.privateKeyToPem(keypair.privateKey);
-      const csrPem = forge.pki.certificationRequestToPem(csr);
+        // Export public key to SPKI format
+        const publicKeyBuffer = await window.crypto.subtle.exportKey("spki", cryptoKeypair.publicKey);
+        const publicKeyBase64 = btoa(String.fromCharCode(...new Uint8Array(publicKeyBuffer)));
+        publicKeyPem = `-----BEGIN PUBLIC KEY-----\n${publicKeyBase64.match(/.{1,64}/g)?.join('\n')}\n-----END PUBLIC KEY-----`;
+      } else {
+        throw new Error("Unsupported curve type");
+      }
 
-      // Generate a fingerprint from public key for identification
-      const publicKeyDer = forge.asn1.toDer(forge.pki.publicKeyToAsn1(keypair.publicKey)).getBytes();
-      const md = forge.md.sha256.create();
-      md.update(publicKeyDer);
-      const fingerprint = md.digest().toHex().toUpperCase();
+      // Calculate fingerprint from public key
+      const publicKeyBuffer = await window.crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(publicKeyPem)
+      );
+      const fingerprintArray = Array.from(new Uint8Array(publicKeyBuffer));
+      const fingerprint = fingerprintArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+
+      const timestamp = Date.now();
+      const fileName = `keypair_${timestamp}`;
 
       setKeys({
         privateKey: privateKeyPem,
-        csr: csrPem,
+        publicKey: publicKeyPem,
         fingerprint,
-        name: data.name.replace(/\s+/g, '_')
       });
+
+      // Auto download private key
+      downloadFile(privateKeyPem, `${fileName}.key.pem`);
+
+      // Auto fill public key to submit form
+      onGenerated(publicKeyPem);
+
       toast.success(t.gen.success);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -210,17 +251,18 @@ function GenerateForm({ t }: { t: typeof locales.en }) {
         <p className="text-sm text-slate-500">{t.gen.desc}</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2">
-          <Label>{t.gen.name}</Label>
-          <Input {...form.register("name")} placeholder="Linus Torvalds" />
-          {form.formState.errors.name && <p className="text-xs text-red-500">{form.formState.errors.name.message}</p>}
-        </div>
-        <div className="space-y-2">
-          <Label>{t.gen.email}</Label>
-          <Input {...form.register("email")} placeholder="linus@kernel.org" />
-          {form.formState.errors.email && <p className="text-xs text-red-500">{form.formState.errors.email.message}</p>}
-        </div>
+      <div className="space-y-2">
+        <Label>{t.gen.curve}</Label>
+        <Select onValueChange={v => form.setValue("curve", v as "P-256" | "P-384")} defaultValue="P-256">
+          <SelectTrigger>
+            <SelectValue placeholder={t.gen.curve} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="P-256">P-256 (NIST P-256 / secp256r1)</SelectItem>
+            <SelectItem value="P-384">P-384 (NIST P-384 / secp384r1)</SelectItem>
+          </SelectContent>
+        </Select>
+        {form.formState.errors.curve && <p className="text-xs text-red-500">{form.formState.errors.curve.message}</p>}
       </div>
 
       <Button onClick={form.handleSubmit(onSubmit)} disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white">
@@ -259,13 +301,13 @@ function GenerateForm({ t }: { t: typeof locales.en }) {
               title={t.gen.priv_warn}
               content={keys.privateKey}
               isSecret
-              downloadName={`${keys.name}.key.pem`}
+              downloadName={`keypair_${Date.now()}.key.pem`}
               downloadText={t.gen.download_priv}
             />
             <KeyDisplay
               title={t.gen.pub_label}
-              content={keys.csr}
-              downloadName={`${keys.name}.csr.pem`}
+              content={keys.publicKey}
+              downloadName={`keypair_${Date.now()}.pub.pem`}
               downloadText={t.gen.download_pub}
             />
           </div>
@@ -275,18 +317,34 @@ function GenerateForm({ t }: { t: typeof locales.en }) {
   );
 }
 
-function SubmitForm({ t }: { t: typeof locales.en }) {
-  const form = useForm<z.infer<typeof submitSchema>>({ resolver: zodResolver(submitSchema) });
+function SubmitForm({ t, initialPublicKey }: { t: typeof locales.en; initialPublicKey: string }) {
+  const form = useForm<z.infer<typeof submitSchema>>({
+    resolver: zodResolver(submitSchema),
+    defaultValues: {
+      csr: initialPublicKey
+    }
+  });
+
+  // Update form when initialPublicKey changes
+  useEffect(() => {
+    if (initialPublicKey) {
+      form.setValue("csr", initialPublicKey);
+    }
+  }, [initialPublicKey, form]);
 
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const result = await parseCertFile(file);
-    if (result && result.text.includes('BEGIN CERTIFICATE REQUEST')) {
-      form.setValue("csr", result.text);
-      toast.success(t.common.import_success);
-    } else {
+    try {
+      const text = await file.text();
+      if (text.includes('BEGIN PUBLIC KEY') || text.includes('BEGIN CERTIFICATE REQUEST')) {
+        form.setValue("csr", text);
+        toast.success(t.common.import_success);
+      } else {
+        toast.error(t.common.import_error);
+      }
+    } catch (e) {
       toast.error(t.common.import_error);
     }
     e.target.value = "";
@@ -294,7 +352,7 @@ function SubmitForm({ t }: { t: typeof locales.en }) {
 
   const onSubmit = (data: z.infer<typeof submitSchema>) => {
     const title = `[keyring] ${data.username}`;
-    const body = `## Submit Developer CSR (Certificate Signing Request)\n\n**CSR**:\n\n\`\`\`\n${data.csr}\n\`\`\`\n\n---\nPlease review and add \`approved\` label to issue certificate.`;
+    const body = `## Submit Developer Public Key\n\n**Public Key**:\n\n\`\`\`\n${data.csr}\n\`\`\`\n\n---\nPlease review and add \`approved\` label to issue certificate.`;
     window.open(`https://github.com/KernelSU-Modules-Repo/developers/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`, "_blank");
   };
 
@@ -323,7 +381,7 @@ function SubmitForm({ t }: { t: typeof locales.en }) {
             <Input id="import-submit" type="file" className="hidden" accept=".pem,.csr,.txt" onChange={handleFileImport} />
           </div>
         </div>
-        <Textarea {...form.register("csr")} className="font-mono text-xs h-32" placeholder="-----BEGIN CERTIFICATE REQUEST-----" />
+        <Textarea {...form.register("csr")} className="font-mono text-xs h-32" placeholder="-----BEGIN PUBLIC KEY-----" />
         {form.formState.errors.csr && <p className="text-xs text-red-500">{form.formState.errors.csr.message}</p>}
       </div>
 
