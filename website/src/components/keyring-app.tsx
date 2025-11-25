@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import * as forge from "node-forge";
+import * as x509 from "@peculiar/x509";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -53,16 +53,17 @@ const downloadFile = (content: string, filename: string) => {
 };
 
 // Calculate certificate fingerprint (SHA-256)
-const getCertificateFingerprint = (cert: forge.pki.Certificate): string => {
-  const der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
-  const md = forge.md.sha256.create();
-  md.update(der);
-  const digest = md.digest().toHex();
-  return digest.toUpperCase().match(/.{2}/g)?.join(':') || '';
+const getCertificateFingerprint = async (cert: x509.X509Certificate): Promise<string> => {
+  const thumbprint = await cert.getThumbprint(crypto);
+  const hex = Array.from(new Uint8Array(thumbprint))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+  return hex.match(/.{2}/g)?.join(':') || '';
 };
 
 // Get certificate serial number
-const getCertificateSerialNumber = (cert: forge.pki.Certificate): string => {
+const getCertificateSerialNumber = (cert: x509.X509Certificate): string => {
   return cert.serialNumber;
 };
 
@@ -77,30 +78,60 @@ const parseCertFile = async (file: File): Promise<{ serialNumber: string, finger
       // Extract only the FIRST certificate from the chain
       const certMatch = text.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
       if (!certMatch) {
-        throw new Error("No valid certificate found");
+        console.error("No certificate block found in file");
+        toast.error("No certificate found in file");
+        return null;
       }
 
       const firstCertPem = certMatch[0];
-      const cert = forge.pki.certificateFromPem(firstCertPem);
 
-      // Validate this is a developer certificate (not a CA certificate)
-      const basicConstraintsExt = cert.getExtension('basicConstraints');
-      if (basicConstraintsExt && (basicConstraintsExt as any).cA === true) {
-        throw new Error("This is a CA certificate, not a developer certificate. Please upload your developer certificate.");
+      let cert: x509.X509Certificate;
+      try {
+        cert = new x509.X509Certificate(firstCertPem);
+      } catch (parseError) {
+        console.error("Failed to parse certificate:", parseError);
+        toast.error("Invalid certificate format");
+        return null;
+      }
+
+      // Check if this is a CA certificate (warning only, not blocking)
+      try {
+        // OID for basicConstraints is 2.5.29.19
+        const basicConstraintsExt = cert.getExtension("2.5.29.19");
+        if (basicConstraintsExt) {
+          const bc = new x509.BasicConstraintsExtension(basicConstraintsExt.value);
+          if (bc.ca === true) {
+            console.warn("Warning: This appears to be a CA certificate");
+            toast.error("This is a CA certificate. Please upload your developer certificate (the first one in the chain).");
+            return null;
+          }
+        }
+      } catch (extError) {
+        // Extension check failed, continue anyway
+        console.warn("Could not check basicConstraints extension:", extError);
       }
 
       // Extract fields
-      const cn = cert.subject.getField('CN')?.value as string;
-      const org = cert.subject.getField('O')?.value as string;
+      const cn = cert.subject.split(',').find(s => s.trim().startsWith('CN='))?.split('=')[1]?.trim();
+      const org = cert.subject.split(',').find(s => s.trim().startsWith('O='))?.split('=')[1]?.trim();
 
-      // Validate organization (optional check, can be removed if too strict)
+      // Log organization info (warning only)
       if (org && org !== 'KernelSU Module Developers') {
-        console.warn(`Warning: Certificate organization is "${org}", expected "KernelSU Module Developers"`);
+        console.warn(`Certificate organization: "${org}" (expected "KernelSU Module Developers")`);
       }
 
+      // Get serial number and fingerprint
+      const serialNumber = getCertificateSerialNumber(cert);
+      const fingerprint = await getCertificateFingerprint(cert);
+
+      console.log("Certificate parsed successfully:");
+      console.log("- Serial Number:", serialNumber);
+      console.log("- CN:", cn);
+      console.log("- Organization:", org);
+
       return {
-        serialNumber: getCertificateSerialNumber(cert),
-        fingerprint: getCertificateFingerprint(cert),
+        serialNumber,
+        fingerprint,
         text: firstCertPem,
         cn
       };
@@ -108,6 +139,8 @@ const parseCertFile = async (file: File): Promise<{ serialNumber: string, finger
 
     // Try to parse as CSR
     if (text.includes('BEGIN CERTIFICATE REQUEST')) {
+      console.warn("File contains CSR, not certificate");
+      toast.error("This is a certificate request (CSR), not a certificate. Please upload your issued certificate.");
       return {
         serialNumber: '',
         fingerprint: '',
@@ -115,9 +148,12 @@ const parseCertFile = async (file: File): Promise<{ serialNumber: string, finger
       };
     }
 
-    throw new Error("Invalid file format");
+    console.error("File does not contain certificate or CSR");
+    toast.error("Invalid file: No certificate found. Please upload a .pem or .crt file containing a certificate.");
+    return null;
   } catch (e) {
-    console.error(e);
+    console.error("Error parsing certificate file:", e);
+    toast.error(`Error reading file: ${(e as Error).message}`);
     return null;
   }
 };
@@ -491,20 +527,20 @@ function QueryForm({ t }: { t: typeof locales.en }) {
 
     try {
       const text = await file.text();
-      const cert = forge.pki.certificateFromPem(text);
+      const cert = new x509.X509Certificate(text);
 
-      const cn = cert.subject.getField('CN')?.value as string || 'Unknown';
-      const issuerCN = cert.issuer.getField('CN')?.value as string || 'Unknown';
+      const cn = cert.subject.split(',').find(s => s.trim().startsWith('CN='))?.split('=')[1]?.trim() || 'Unknown';
+      const issuerCN = cert.issuer.split(',').find(s => s.trim().startsWith('CN='))?.split('=')[1]?.trim() || 'Unknown';
       const now = new Date();
 
       setResult({
         cn,
-        fingerprint: getCertificateFingerprint(cert),
+        fingerprint: await getCertificateFingerprint(cert),
         serialNumber: cert.serialNumber,
         issuer: issuerCN,
-        validFrom: cert.validity.notBefore.toLocaleDateString(),
-        validTo: cert.validity.notAfter.toLocaleDateString(),
-        isValid: now >= cert.validity.notBefore && now <= cert.validity.notAfter
+        validFrom: cert.notBefore.toLocaleDateString(),
+        validTo: cert.notAfter.toLocaleDateString(),
+        isValid: now >= cert.notBefore && now <= cert.notAfter
       });
       toast.success(t.query.found);
     } catch (e) {
@@ -588,10 +624,10 @@ function RevokeForm({ t }: { t: typeof locales.en }) {
     const result = await parseCertFile(file);
     if (result && result.serialNumber) {
       form.setValue("serial_number", result.serialNumber);
-      toast.success(t.common.import_success);
-    } else {
-      toast.error(t.common.import_error);
+      toast.success(`✅ ${t.common.import_success}\nSerial: ${result.serialNumber.substring(0, 16)}...`);
+      console.log("Certificate imported:", result.cn || "Unknown CN");
     }
+    // Error messages are already shown by parseCertFile
     e.target.value = "";
   };
 
