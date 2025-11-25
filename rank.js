@@ -143,6 +143,16 @@ async function fetchUserStats (username, token) {
     `
 
     const { data } = await octokit.graphql(query, { login: username })
+
+    // Debug: 输出完整的GraphQL响应
+    console.log('GraphQL Response:', JSON.stringify(data, null, 2))
+
+    if (!data || !data.user) {
+      console.error('GraphQL data.user is null or undefined')
+      console.error('Full response:', JSON.stringify(data, null, 2))
+      throw new Error(`User not found or insufficient permissions to access user data`)
+    }
+
     const userData = data.user
 
     // 计算总星标数

@@ -162,6 +162,7 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
     const report = generateReport(stats, evaluation)
 
     // 所有提交自动通过,只附加rank信息
+    console.log('Creating approval comment with rank info...')
     await createComment(
       token,
       owner,
@@ -177,11 +178,14 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
       '- 📝 Make sure your public key is properly formatted between `-----BEGIN PUBLIC KEY-----` and `-----END PUBLIC KEY-----` markers\n\n' +
       'Your certificate will be issued automatically. Please wait a moment...'
     )
+    console.log('Adding approved label...')
     await addLabel(token, owner, repo, issueNumber, 'approved')
     console.log(`Auto-approved: ${username} (Rank: ${evaluation.rank.level})`)
   } catch (error) {
     console.error('Error in auto-evaluation:', error)
+    console.error('Error stack:', error.stack)
     // 如果评估失败，仍然自动通过但不显示rank信息
+    console.log('Creating fallback approval comment...')
     await createComment(
       token,
       owner,
@@ -200,6 +204,7 @@ async function autoEvaluateDeveloper (token, owner, repo, issueNumber, username)
       '- 📝 Make sure your public key is properly formatted\n\n' +
       'Your certificate will be issued automatically. Please wait a moment...'
     )
+    console.log('Adding approved label (fallback)...')
     await addLabel(token, owner, repo, issueNumber, 'approved')
     console.log(`Auto-approved (no rank): ${username}`)
   }
@@ -241,19 +246,25 @@ async function handleKeyringIssue () {
 
     // Handle labeled event (approval)
     if (action !== 'labeled') {
-      console.log('Not a labeled or opened event')
+      console.log('Not a labeled or opened event, action:', action)
       return
     }
 
+    console.log('Handling labeled event')
     const label = context.payload.label
+    console.log('Label:', label ? label.name : 'null')
+
     if (!label || label.name !== 'approved') {
-      console.log('Not an approved label')
+      console.log('Not an approved label, skipping certificate issuance')
       return
     }
 
+    console.log('Approved label detected, proceeding with certificate issuance')
     const approver = context.payload.sender
+    console.log('Approver:', approver.login)
 
     const publicKeyPem = extractPublicKeyFromIssue(issueBody)
+    console.log('Public key extracted:', publicKeyPem ? 'Yes' : 'No')
 
     if (!publicKeyPem) {
       await createComment(
