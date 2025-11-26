@@ -63,8 +63,9 @@ async function updateAndCommitCRL (token, owner, repo, reason = 'Update CRL') {
     execSync('git add website/public/crl.json', { stdio: 'inherit' })
 
     console.log('💾 Committing changes...')
-    const commitMessage = `chore: update CRL - ${reason}
+    const commitMessage = `chore: update CRL
 
+Reason: ${reason}
 Generated at: ${crl.generatedAt}
 Total issued: ${crl.totalIssued}
 Total revoked: ${crl.totalRevoked}`

@@ -5,7 +5,6 @@ const x509 = require('@peculiar/x509')
 const { getRepo, createComment, removeLabel, closeIssue, addLabel, setLabel } = require('./github-utils')
 const { fetchUserStats, evaluateUser, generateReport } = require('./rank')
 const { checkExistingCertificate } = require('./cert-manager')
-const { updateAndCommitCRL } = require('./crl-utils')
 
 // Set crypto provider for @peculiar/x509
 x509.cryptoProvider.set(crypto.webcrypto)
@@ -444,9 +443,6 @@ async function handleKeyringIssue () {
     )
 
     await closeIssue(token, owner, repo, issueNumber, true)
-
-    // 更新 CRL 并提交到仓库（自动触发网站部署）
-    await updateAndCommitCRL(token, owner, repo, `Certificate issued for @${username}`)
   } catch (error) {
     core.setFailed(error.message)
     console.error('Error handling keyring issue:', error)

@@ -159,7 +159,7 @@ async function handleRevokeIssue () {
     console.log(`Certificate ${serialNumber} revoked successfully`)
 
     // 更新 CRL 并提交到仓库（自动触发网站部署）
-    await updateAndCommitCRL(token, owner, repo, `Certificate revoked: ${serialNumber.substring(0, 16)}...`)
+    await updateAndCommitCRL(token, owner, repo, `Certificate revoked: ${serialNumber}`)
   } catch (error) {
     console.error('Error handling revoke issue:', error)
     console.error('Error stack:', error.stack)
