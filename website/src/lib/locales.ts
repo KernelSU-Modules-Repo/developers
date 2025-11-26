@@ -3,7 +3,7 @@ export const locales = {
   en: {
     title: "KernelSU Keyring",
     subtitle: "Developer Identity Management System (X.509 PKI)",
-    tabs: { generate: "Generate", submit: "Submit", query: "Query", revoke: "Revoke" },
+    tabs: { generate: "Generate", submit: "Submit", revoke: "Revoke" },
     gen: {
       title: "Generate Key Pair",
       desc: "Create a private key and public key locally for certificate issuance.",
@@ -23,16 +23,6 @@ export const locales = {
       pub: "Public Key",
       btn: "Create GitHub Issue",
       warn: "Security: Never submit your private key, only the public key.",
-    },
-    query: {
-      title: "Query Certificate",
-      desc: "Verify a certificate from the official keyring.",
-      ph: "Certificate Fingerprint (SHA-256)",
-      btn: "Search Certificate",
-      found: "Certificate Found ✅",
-      not_found: "Certificate not found in official keyring.",
-      self: "Self-Signed",
-      core: "CA Verified",
     },
     revoke: {
       title: "Revoke Certificate",
@@ -61,7 +51,7 @@ export const locales = {
   zh: {
     title: "KernelSU 密钥库",
     subtitle: "开发者身份认证管理系统 (X.509 PKI)",
-    tabs: { generate: "生成", submit: "提交", query: "查询", revoke: "吊销" },
+    tabs: { generate: "生成", submit: "提交", revoke: "吊销" },
     gen: {
       title: "生成密钥对",
       desc: "在本地生成私钥和公钥以申请证书签发。",
@@ -81,16 +71,6 @@ export const locales = {
       pub: "公钥",
       btn: "创建 GitHub Issue",
       warn: "安全提示：永远不要提交您的私钥，仅提交公钥。",
-    },
-    query: {
-      title: "查询证书",
-      desc: "验证官方密钥库中的证书。",
-      ph: "证书指纹 (SHA-256)",
-      btn: "查询证书",
-      found: "已找到证书 ✅",
-      not_found: "未在官方库中找到此证书。",
-      self: "自签名",
-      core: "CA 认证",
     },
     revoke: {
       title: "吊销证书",

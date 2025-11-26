@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { toast } from "sonner";
 import {
-  Copy, Loader2, ShieldCheck, AlertTriangle, Search, Key,
+  Copy, Loader2, AlertTriangle, Key,
   Github, Globe, Download, Upload, FileKey
 } from "lucide-react";
 
@@ -194,10 +194,9 @@ export function KeyringApp() {
         {mounted ? (
           <Tabs defaultValue="generate" className="w-full">
             <div className="border-b px-6 py-2 bg-slate-50/50 dark:bg-slate-900/50">
-              <TabsList className="grid w-full grid-cols-4 bg-slate-200/50 dark:bg-slate-800/50">
+              <TabsList className="grid w-full grid-cols-3 bg-slate-200/50 dark:bg-slate-800/50">
                 <TabsTrigger value="generate">{t.tabs.generate}</TabsTrigger>
                 <TabsTrigger value="submit">{t.tabs.submit}</TabsTrigger>
-                <TabsTrigger value="query">{t.tabs.query}</TabsTrigger>
                 <TabsTrigger value="revoke">{t.tabs.revoke}</TabsTrigger>
               </TabsList>
             </div>
@@ -208,9 +207,6 @@ export function KeyringApp() {
               </TabsContent>
               <TabsContent value="submit" forceMount className="data-[state=inactive]:hidden">
                 <SubmitForm t={t} initialPublicKey={generatedPublicKey} />
-              </TabsContent>
-              <TabsContent value="query" forceMount className="data-[state=inactive]:hidden">
-                <QueryForm t={t} />
               </TabsContent>
               <TabsContent value="revoke" forceMount className="data-[state=inactive]:hidden">
                 <RevokeForm t={t} />
@@ -464,152 +460,6 @@ function SubmitForm({ t, initialPublicKey }: { t: typeof locales.en; initialPubl
       <Button onClick={form.handleSubmit(onSubmit)} className="w-full">
         <Github className="w-4 h-4 mr-2" /> {t.sub.btn}
       </Button>
-    </div>
-  );
-}
-
-interface QueryResult {
-  cn: string;
-  fingerprint: string;
-  serialNumber: string;
-  issuer: string;
-  validFrom: string;
-  validTo: string;
-  isValid: boolean;
-}
-
-function QueryForm({ t }: { t: typeof locales.en }) {
-  const [fp, setFp] = useState("");
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const result = await parseCertFile(file);
-    if (result && result.fingerprint) {
-      setFp(result.fingerprint);
-      toast.success(t.common.import_success);
-    } else {
-      toast.error(t.common.import_error);
-    }
-    e.target.value = "";
-  };
-
-  const handleQuery = async () => {
-    if (!fp) return toast.error("Please enter fingerprint");
-    setLoading(true);
-    setResult(null);
-    try {
-      // Fetch certificate bundle from repository
-      const res = await fetch("https://raw.githubusercontent.com/KernelSU-Modules-Repo/developers/main/keyring/developers/");
-      if (!res.ok) throw new Error("Failed to fetch certificate list");
-
-      // For now, we'll provide a direct certificate lookup interface
-      // The actual implementation would iterate through available certificates
-      const cleanFp = fp.replace(/[:\s]/g, "").toUpperCase();
-
-      // Placeholder: In production, this would fetch and search actual certificates
-      toast.error(t.query.not_found + " (Certificate directory not yet configured)");
-
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Direct certificate verification from file
-  const handleVerifyCert = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      const cert = new x509.X509Certificate(text);
-
-      const cn = cert.subject.split(',').find(s => s.trim().startsWith('CN='))?.split('=')[1]?.trim() || 'Unknown';
-      const issuerCN = cert.issuer.split(',').find(s => s.trim().startsWith('CN='))?.split('=')[1]?.trim() || 'Unknown';
-      const now = new Date();
-
-      setResult({
-        cn,
-        fingerprint: await getCertificateFingerprint(cert),
-        serialNumber: cert.serialNumber,
-        issuer: issuerCN,
-        validFrom: cert.notBefore.toLocaleDateString(),
-        validTo: cert.notAfter.toLocaleDateString(),
-        isValid: now >= cert.notBefore && now <= cert.notAfter
-      });
-      toast.success(t.query.found);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    }
-    e.target.value = "";
-  };
-
-  return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
-       <div>
-        <h2 className="text-lg font-semibold">{t.query.title}</h2>
-        <p className="text-sm text-slate-500">{t.query.desc}</p>
-      </div>
-
-      <div className="space-y-2">
-        <div className="flex justify-between">
-          <Label>{t.query.ph}</Label>
-          <div className="flex items-center gap-2">
-             <Label htmlFor="verify-cert" className="cursor-pointer text-xs flex items-center gap-1 text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded">
-               <FileKey className="w-3 h-3" /> {t.common.import_file}
-             </Label>
-             <Input id="verify-cert" type="file" className="hidden" accept=".pem,.cert,.crt" onChange={handleVerifyCert} />
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Input value={fp} onChange={e => setFp(e.target.value)} placeholder="AA:BB:CC:DD..." className="font-mono" />
-          <Button onClick={handleQuery} disabled={loading}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-          </Button>
-        </div>
-      </div>
-
-      {result && (
-        <Card className="bg-slate-50 dark:bg-slate-900">
-          <CardContent className="p-4 space-y-3 text-sm">
-             <div className="flex justify-between py-1 border-b">
-                <span className="text-slate-500">Common Name (CN)</span>
-                <span className="font-medium">{result.cn}</span>
-             </div>
-             <div className="flex justify-between py-1 border-b">
-                <span className="text-slate-500">Serial Number</span>
-                <span className="font-mono text-xs">{result.serialNumber}</span>
-             </div>
-             <div className="flex justify-between py-1 border-b">
-                <span className="text-slate-500">Issuer</span>
-                <span className="font-medium">{result.issuer}</span>
-             </div>
-             <div className="flex justify-between py-1 border-b">
-                <span className="text-slate-500">Valid From</span>
-                <span>{result.validFrom}</span>
-             </div>
-             <div className="flex justify-between py-1 border-b">
-                <span className="text-slate-500">Valid To</span>
-                <span>{result.validTo}</span>
-             </div>
-             <div className="flex justify-between py-1 border-b">
-                <span className="text-slate-500">Status</span>
-                <span className={result.isValid ? "text-green-600 font-medium" : "text-red-600 font-medium"}>
-                  {result.isValid ? "Valid ✓" : "Expired ✗"}
-                </span>
-             </div>
-             <div className="pt-2">
-                <span className="text-slate-500 block mb-1">Fingerprint (SHA-256)</span>
-                <code className="block bg-slate-200 dark:bg-slate-800 p-2 rounded text-xs break-all">{result.fingerprint}</code>
-             </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
