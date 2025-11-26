@@ -18,10 +18,11 @@ const path = require('path')
 const { getOctokit } = require('@actions/github')
 
 /**
- * 从 issue 评论中提取证书信息
+ * 从 issue 评论中提取证书信息（取最后一条）
  */
 function extractCertificateInfoFromComments (comments) {
-  const certComment = comments.find(c =>
+  // 从后往前查找最后一条证书签发评论
+  const certComment = comments.slice().reverse().find(c =>
     c.body &&
     c.body.includes('✅ Certificate successfully issued') &&
     c.body.includes('Serial Number')

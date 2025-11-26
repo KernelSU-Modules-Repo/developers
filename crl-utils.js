@@ -67,10 +67,7 @@ async function updateAndCommitCRL (token, owner, repo, reason = 'Update CRL') {
 
 Generated at: ${crl.generatedAt}
 Total issued: ${crl.totalIssued}
-Total revoked: ${crl.totalRevoked}
-
-🤖 Generated with Claude Code
-Co-Authored-By: Claude <noreply@anthropic.com>`
+Total revoked: ${crl.totalRevoked}`
 
     execSync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, { stdio: 'inherit' })
 
