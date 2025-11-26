@@ -74,19 +74,33 @@ function extractSerialNumberFromBody (body) {
 function extractRevocationReason (body) {
   if (!body) return 'unspecified'
 
-  const reasonMatch = body.match(/reason[:：]\s*(\w+)/i)
-  if (!reasonMatch) return 'unspecified'
+  // 格式1: ### Revocation Reason\n\nCompromised (GitHub issue 模板格式)
+  const match1 = body.match(/###\s*Revocation\s*Reason\s*\n+(\w+)/i)
+  if (match1) {
+    const reason = match1[1].toLowerCase()
+    return mapRevocationReason(reason)
+  }
 
-  const reason = reasonMatch[1].toLowerCase()
+  // 格式2: reason: xxx 或 reason：xxx
+  const match2 = body.match(/reason[:：]\s*(\w+)/i)
+  if (match2) {
+    const reason = match2[1].toLowerCase()
+    return mapRevocationReason(reason)
+  }
 
-  // 映射到标准 CRL 原因代码
+  return 'unspecified'
+}
+
+/**
+ * 映射吊销原因到标准 CRL 原因代码
+ */
+function mapRevocationReason (reason) {
   const reasonMap = {
     compromised: 'keyCompromise',
     lost: 'keyCompromise',
     superseded: 'superseded',
     other: 'unspecified'
   }
-
   return reasonMap[reason] || 'unspecified'
 }
 
